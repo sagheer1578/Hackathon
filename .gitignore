@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/*.json
+data/uploads/
 !data/.gitkeep
 data/.*.lock
 frontend/node_modules/

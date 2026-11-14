@@ -106,7 +106,9 @@ def generate_pdf(patient: Patient, report: Report, analysis: Analysis) -> bytes:
         sex_str = f'{sex_str} (user-supplied)'
     orig_age_str = str(report.original_age_at_report) if report.original_age_at_report is not None else 'Not provided'
     orig_sex_str = report.original_sex_at_report
-    report_date_str = str(report.report_date) if report.report_date else 'Not provided'
+    report_date_str = str(report.report_date) if report.report_date else 'Not listed on document'
+    uploaded_str = f'{report.uploaded_at:%Y-%m-%d %H:%M}' if report.uploaded_at else '—'
+    m_by_id = {m.id: m for m in report.measurements}
 
     story: list = [
         p('CityLab Diagnostics', 'BrandHeader'),
@@ -117,8 +119,9 @@ def generate_pdf(patient: Patient, report: Report, analysis: Analysis) -> bytes:
     meta_rows = [
         [p('Patient Name'), p(patient.name), p('Patient ID'), p(patient.id)],
         [p('Age Used for Analysis'), p(age_str), p('Sex Used for Analysis'), p(sex_str)],
-        [p('Original Report Date'), p(report_date_str), p('Generated (UTC)'), p(f'{analysis.generated_at:%Y-%m-%d %H:%M}')],
-        [p('Report ID'), p(report.id), p('Knowledge Version'), p(f'{analysis.knowledge_version} ({analysis.knowledge_provenance})')],
+        [p('Original Report Date'), p(report_date_str), p('Uploaded / Saved (UTC)'), p(uploaded_str)],
+        [p('Report ID'), p(report.id), p('Generated (UTC)'), p(f'{analysis.generated_at:%Y-%m-%d %H:%M}')],
+        [p('Knowledge Version'), p(f'{analysis.knowledge_version} ({analysis.knowledge_provenance})'), p('Source File'), p(report.source_file or '—')],
     ]
     if report.demographics_overridden:
         meta_rows.insert(
@@ -236,10 +239,16 @@ def generate_pdf(patient: Patient, report: Report, analysis: Analysis) -> bytes:
         label = r.test
         if r.canonical_test_name and r.canonical_test_name.casefold() != r.test.casefold():
             label = f'{r.test} ({r.canonical_test_name})'
+        src_meas = m_by_id.get(r.measurement_id)
+        if src_meas and src_meas.user_corrected:
+            label = f'{label} [User corrected]'
+        orig_val_cell = f'{r.value} {r.unit}'.strip() or '—'
+        if src_meas and src_meas.user_corrected:
+            orig_val_cell += f' (extracted: {src_meas.original_value or "—"} {src_meas.original_unit or ""})'.rstrip()
         rows.append(
             [
                 p(label),
-                p(f'{r.value} {r.unit}'.strip() or '—'),
+                p(orig_val_cell),
                 p(conv_str),
                 p(r.reference),
                 status_para,

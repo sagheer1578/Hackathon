@@ -115,7 +115,12 @@ def test_upload_authorization_and_idempotency(client):
     assert first.status_code == 201
     again = c.post('/api/reports/upload', headers=auth(), files={'file': ('report.csv', content, 'text/csv')})
     assert first.json() == again.json()
-    assert c.post('/api/reports/upload', headers=auth(TOKEN_B), files={'file': ('report.csv', content)}).status_code == 422
+    # Uploading as patient-b binds the report strictly to patient-b even if the file prints patient-a
+    b_upload = c.post('/api/reports/upload', headers=auth(TOKEN_B), files={'file': ('report.csv', content)})
+    assert b_upload.status_code == 201
+    b_rid = b_upload.json()['report_id']
+    assert c.get(f'/api/reports/{b_rid}', headers=auth(TOKEN_B)).json()['report']['patient_id'] == 'patient-b'
+    assert c.get(f'/api/reports/{b_rid}', headers=auth()).status_code == 404
     report_id = first.json()['report_id']
     assert c.get(f'/api/reports/{report_id}', headers=auth()).json()['analysis']['counts']['Normal'] == 1
 

@@ -154,6 +154,11 @@ def compute_analysis_revision(report: Report | None, analysis: Analysis) -> str:
             'knowledge_provenance': analysis.knowledge_provenance,
             'age': str(report.age_at_report) if report and report.age_at_report is not None else '',
             'sex': report.sex_at_report if report else '',
+            'review_status': report.review_status if report else '',
+            'corrections': [
+                [m.id, m.user_corrected, m.original_value or '', m.original_unit or '']
+                for m in (report.measurements if report else [])
+            ],
             'results': [
                 [r.measurement_id, r.status, r.value, r.unit, r.converted_value, r.reference]
                 for r in analysis.results

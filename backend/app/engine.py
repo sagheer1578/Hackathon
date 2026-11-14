@@ -142,6 +142,10 @@ def analyze(report: Report, db: Database) -> Analysis:
             unit=m.unit,
             evidence=[m.evidence],
         )
+        if m.user_corrected:
+            orig_desc = f'{m.original_test or m.test}: {m.original_value or ""} {m.original_unit or ""}'.strip()
+            new_desc = f'{m.test}: {m.value} {m.unit}'.strip()
+            out.audit.append(f'User-corrected measurement: original extracted "{orig_desc}" updated by user to "{new_desc}".')
         results.append(out)
 
         def fail(reason: str) -> None:

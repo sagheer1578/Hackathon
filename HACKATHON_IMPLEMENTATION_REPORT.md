@@ -7,7 +7,7 @@
 
 We built and hardened a minimal-enterprise **Medical Lab Report Explainer** workspace inside `C:\Users\saqlain\Desktop\hack`. The system separates **deterministic medical classification** (Python `Decimal` rules engine) from **natural-language explanation** (deterministic intent router + optional schema-validated LLM phrasing), ensuring that no language model can compute, alter, or invent numeric results, reference ranges, statuses, diagnoses, or treatment advice.
 
-All state and normalized medical rules are stored in a **canonical atomic JSON snapshot (`data/database.json`)** with `filelock` concurrency control, duplicate-key rejection, fail-closed corruption handling, and non-destructive migration from the legacy 9-file layout. After the final code edits, **89 automated pytest tests passed (0 failed, 1 Starlette deprecation warning)**, **92 literal evidence citations** matched `corpus/` files verbatim, the TypeScript/Vite frontend compiled cleanly (`0` errors, zero CSS `gradient`/`backdrop-filter`/`box-shadow`), and live HTTP checks against `http://127.0.0.1:8001` verified health, served UI bundle content, all 4 sample persona assistant/demographics workflows, PDF downloads, and 5-endpoint cross-patient `404` isolation.
+All state, credentials/sessions, and normalized medical rules are stored in a **canonical atomic JSON snapshot (`data/database.json`)** with `filelock` concurrency control, duplicate-key rejection, fail-closed corruption handling, and non-destructive migration from the legacy 9-file layout, alongside private uploaded source documents confined under `data/uploads/<patient_id>/`. After the final code edits, **94 automated pytest tests passed (0 failed, 1 Starlette deprecation warning)**, the TypeScript/Vite frontend compiled cleanly (`0` errors, zero `frontend/src` `gradient`/`backdrop-filter`/`box-shadow`), and live HTTP checks against `http://127.0.0.1:8001` verified personal profile creation, login, upload, review correction, source download, server-restart persistence, 5-endpoint cross-profile `404` isolation, and all sample demo workflows.
 
 ---
 
@@ -32,21 +32,19 @@ Because `C:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied
 ## 3. Completed Features vs. Incomplete / Environment-Limited Items
 
 ### Completed & Verified
-- Structured markdown/CSV/TXT/JSON/text-PDF report ingestion with boilerplate noise stripping, injection detection, duplicate JSON key rejection, and exact line/page coordinates.
-- Corpus parser (`backend/app/corpus_parser.py`) with synthetic provenance tracking (`knowledge_provenance: "synthetic"`) and literal excerpt verification (`verify_corpus_evidence`).
-- Canonical atomic JSON snapshot repository (`backend/app/storage.py` writing `data/database.json`) with `FileLock`, duplicate-key rejection, fail-closed corruption guards, and one-time non-destructive migration preserving the legacy 9 `*.json` files.
-- Deterministic `Decimal` medical rules engine (`backend/app/engine.py`) with synthetic-vs-real report isolation.
-- Deterministic intent router, phrase-matched test resolution, validated report-scoped follow-up state (`active_measurement_ids` + `context_revision`), strict `StructuredAIResponse` (`extra='forbid'`), hardened numeric/status/diagnosis/treatment `validate_ai_text`, and provider-independent `LLMAdapter` (`backend/app/ai.py`).
-- FastAPI backend (`backend/app/main.py`) with Bearer token patient isolation, rate limiting (120 req/min/host), demo allowlist (`DEMO_MODE`), upload `synthetic=False` enforcement, interactive session demographic updates/resets with original source preservation (`/demographics`), and SPA serving via `run_server.py` on `http://127.0.0.1:8001`.
-- Server-side ReportLab PDF generator (`backend/app/pdf.py`) including `"SYNTHETIC DEMONSTRATION"` banner/notice when synthetic and explicit `Original Source Age`/`Sex` vs `(user-supplied)` demographic distinction.
-- Enterprise minimal zero-gradient React + TypeScript + Tailwind frontend (`frontend/src/main.tsx`), compiled into `frontend/dist/`.
-- **89 passed, 0 failed** automated `pytest` assertions + live HTTP acceptance checks across all 4 sample personas, PDFs, demographic updates, and cross-patient `404` isolation on `http://127.0.0.1:8001`.
+- Structured `.pdf`, `.png`, `.jpg`, `.jpeg`, `.txt`, `.md`, `.csv`, and `.json` report ingestion with boilerplate noise stripping, injection detection, duplicate JSON key rejection, optional local Tesseract OCR fallback for images/scans, authenticated owner binding regardless of printed document Patient IDs, printed-name mismatch detection, and exact line/page/OCR coordinates.
+- Simple personal profiles & single-display access codes (`POST /api/auth/register` generating 150-bit CSPRNG `CLD-...` codes with SHA-256 hashed credentials and 24-hour session tokens in `data/database.json`), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, and strict separation from synthetic sample personas.
+- Inline extraction review (`PATCH /api/reports/{report_id}/review`) tracking `user_corrected`, original extracted values, mismatch confirmation, audit entries (`User-corrected measurement`), PDF `[User corrected]` markers, and stale-chat context invalidation.
+- Private upload storage (`data/uploads/<patient_id>/<report_id>.<ext>`) with rollback on DB failure and owner-only streaming (`GET /api/reports/{report_id}/source` with `Content-Security-Policy: default-src 'none'; sandbox` and SPA blocking of `/uploads/` & `/data/`).
+- Clickable upper-left **CityLab** logo (`aria-label="CityLab home"`) returning signed-in users to `Dashboard` without losing session/reports and resetting welcome state when signed out.
+- **94 passed, 0 failed** automated `pytest` assertions + two-phase live HTTP acceptance & restart-persistence checks on `http://127.0.0.1:8001`.
 - Dockerfiles, Nginx config, `.dockerignore`, `.env.example`, and `docker-compose.yml`.
 
 ### Incomplete / Not Executed Due to Host Environment
+- **Local Image/Scanned-PDF OCR Runtime:** `tesseract` CLI is not installed on this Windows machine (`ocr_available: false`), so live non-mocked OCR on `.png`/`.jpg` or scanned PDFs could not run against a physical Tesseract binary; all OCR paths, uncertainty flags, and missing-Tesseract `422` errors were verified via `OCR_RUNNER` mocks and unit/API tests, while digital text PDFs, CSV, TXT, Markdown, and JSON work natively.
 - **Live Docker Compose Runtime Execution:** Docker Desktop / `docker` CLI is not installed on this Windows host, so `docker compose up --build` was not executed locally.
 - **Live External LLM API Calls:** No `LLM_API_KEY` is configured in the environment (`LLM_PROVIDER=disabled`, `ai_configured=false`); live external Groq or OpenRouter model responses are therefore **not verified**. AI validation, rejection of fabricated numbers/prescriptions, schema validation, and timeout/`429`/malformed-JSON fallbacks were tested with mocked payloads in `pytest`.
-- **Live Chrome DevTools DOM Rendering Walkthrough:** The Chrome DevTools remote debugging socket (`DevToolsActivePort`) was not active on this Windows host during verification, so interactive mouse-click DOM layout, computed style checks in Chrome, and `375px` mobile viewport rendering were not directly inspected in a live Chrome window. Responsive styling (`styles.css` with `:focus-visible` and mobile media queries), built TypeScript/Vite compilation, zero gradients/shadows, and served HTML/JS/CSS asset contents were verified instead alongside live HTTP acceptance calls.
+- **Live Chrome DevTools DOM Rendering Walkthrough:** Chrome remote debugging (`DevToolsActivePort`) was unavailable on this Windows host, so interactive click-through DOM visual checks in Chrome were not executed; verified TypeScript compilation, Vite bundle output, served bundle strings, `:focus-visible` CSS rules, zero `gradient`/`backdrop-filter`/`box-shadow` in source files, and live HTTP workflows instead.
 
 ---
 
@@ -116,7 +114,7 @@ Every mutation acquires `FileLock('.storage.lock', timeout=10)`, reads `database
 Implemented in [`frontend/src/main.tsx`](frontend/src/main.tsx) and [`frontend/src/styles.css`](frontend/src/styles.css):
 - **Minimalist Flat Enterprise Aesthetic:** Neutral `#f8fafc` workspace, `#ffffff` cards, `#0f172a` slate-navy typography, restrained `#0f766e` teal primary accent, and `1px` `#e2e8f0` borders.
 - **Strict Zero-Gradient Compliance:** Verified across all `frontend/src` and `backend/app` files (`0` matches for `gradient`, `backdrop-filter`, `box-shadow`), and verified in the compiled served CSS that `0` `linear-gradient`, `radial-gradient`, or `conic-gradient` functions exist.
-- **First-Time Entry & Assistant UX:** Landing screen shows **Choose a sample report** (4 one-click `"Synthetic demo"` cards with `"View report"`) above a collapsed **Have a private access code?** disclosure without exposing raw demo token strings or `"32+ character"` jargon. Inside the workspace, **Switch sample patient** cancels in-flight requests (`AbortController`) and clears prior chat/selection state; the **Report assistant** surfaces `"View sources"` and `"Report information"` disclosures cleanly without internal machinery names, clearly states when AI assistance is unavailable, and places noisy ingestion telemetry inside a secondary collapsible **Document processing notes** section.
+- **Entry Flow, Home Logo & Review UX:** Landing screen separates personal workspaces (**Create your profile** and **Sign in with access code**) from **Try a sample report** (4 one-click `"Synthetic demo"` cards with `"View report"`). Clicking the upper-left **CityLab** logo (`aria-label="CityLab home"`) returns to `Dashboard` without logging out or clearing saved reports. Personal workspaces hide `"Switch sample patient"`, show an empty state with `"Upload your first report"`, open **Review the extracted results** (`PATCH /api/reports/{id}/review`) on upload with `Uncertain` and `User corrected` indicators plus authenticated **View original report** access, and keep noisy ingestion telemetry collapsed inside **Document processing notes**.
 
 ---
 
@@ -132,52 +130,19 @@ Implemented in [`frontend/src/main.tsx`](frontend/src/main.tsx) and [`frontend/s
 
 Executed after final code edits via `.\.venv\Scripts\pytest.exe -v`, `npm.cmd run build`, CLI evidence verification, and live `http://127.0.0.1:8001` HTTP acceptance checks:
 
-| Suite / Check | Command / Target | Result | Verified Scope |
-|---|---|---|---|
-| **Full Automated Pytest Suite** | `.\.venv\Scripts\pytest.exe -v` | **89 passed, 0 failed** (1 Starlette `httpx` warning, `10.99s`) | Rules engine (`tests/test_engine.py`), canonical atomic snapshot & legacy migration & ingestion (`tests/test_ingestion_storage.py`), API/Auth/Assistant/AI-validation/PDF (`tests/test_api_ai_pdf.py`) |
-| Corpus Ingestion & Evidence Verification | `cli.py --data-dir data ingest-corpus corpus` & `verify-evidence corpus` | **92 citations verified** | `vdf3e2fb7d0820a62`: 17 tests, 26 ranges, 12 urgent rules, 4 patients, 8 reports; created `data/database.json` while keeping `corpus/` & legacy `data/*.json` unchanged |
-| Frontend Build | `cd frontend; npm.cmd run build` | **Passed (0 errors, `7.66s`)** | `tsc -b && vite build` emitted `dist/index.html` (`0.44 kB`), `dist/assets/index-dw2jjv0z.css` (`20.49 kB`), `dist/assets/index-imkg2hPj.js` (`286.53 kB`) |
-| Live Server Health & Assets | `GET http://127.0.0.1:8001/api/health`, `/`, `/assets/index-*.js`, `/assets/index-*.css` | **HTTP 200 OK** | Confirmed `knowledge_provenance: "synthetic"`, `snapshot_file: "database.json"`, `ai_configured: false`, `:focus-visible`, zero CSS gradients, and updated UI labels |
-| Live 4-Persona API & PDF Acceptance | Live `http://127.0.0.1:8001` Python HTTP checks | **Passed** | Arjun multi-turn `ALT -> Is it high? -> reference range -> normal -> high -> urgent -> doctor questions`; Fatima urgent + `11,300`-byte PDF; Jordan `34/female` override + `10,188`-byte PDF (`Original Source Age` & `user-supplied`) + reset; Viktor noise/injection telemetry; 5x cross-patient `404` checks |
+- **Full Automated Pytest Suite:** `.\.venv\Scripts\pytest.exe -v` -> **94 passed, 0 failed** (1 Starlette `httpx` deprecation warning, `12.24 s`), adding [`tests/test_personal_profiles_and_uploads.py`](tests/test_personal_profiles_and_uploads.py) alongside `test_engine.py`, `test_ingestion_storage.py`, and `test_api_ai_pdf.py`.
+- **Frontend Production Build:** `cd frontend && npm.cmd run build` -> **Passed (0 errors, `5.39 s`)**, emitting `dist/index.html` (`0.44 kB`), `dist/assets/index-rkUJx14J.css` (`21.80 kB`), `dist/assets/index-Yja_kfwj.js` (`305.13 kB`), with zero `gradient`, `backdrop-filter`, or `box-shadow` in `frontend/src/`.
+- **Live Server & Restart Persistence (`http://127.0.0.1:8001`):** Verified `/api/health` (`status: "ok"`, `ocr_available: false`), `/` + `index-Yja_kfwj.js` UI strings (`CityLab home`, `Create your profile`, `Sign in with access code`, `Review the extracted results`, `Save and analyze`, `View original report`), live profile registration -> TXT & text-PDF upload -> inline `PATCH /review` measurement correction -> `/source` download -> `/chat` -> ReportLab PDF (`User corrected`) -> logout token revocation (`401`) -> post-restart re-login with the saved access code confirming persistence of reports and corrections -> cross-profile `404` isolation -> existing sample persona flows (`Arjun Mehta` chat/PDF) -> clean snapshot restore (`data/database.json`: `212,992` bytes, `patients_count: 4`, `reports_count: 8`).
+
+## 11. Known Limitations
+
+1. **Image & Scanned-PDF OCR Host Dependency:** Requires local `tesseract` binary for `.png`/`.jpg`/`.jpeg` or image-only PDFs (`ocr_available: false` on this Windows host); digital text PDFs, CSV, TXT, Markdown, and JSON extract directly without Tesseract.
+2. **Prototype JSON Storage Concurrency:** Filesystem-locked `data/database.json` and `data/uploads/` are suited for single-node demonstrations rather than high-throughput clinical systems.
+3. **LLM Provider Disabled / Docker & Chrome UI Unrun Locally:** Runs deterministically with `LLM_PROVIDER=disabled`; Docker Desktop and Chrome remote debugging (`DevToolsActivePort`) were absent on this host.
 
 ---
 
-## 11. Edge-Case Coverage Summary
-
-Covered in both automated regression tests and live corpus patients:
-- `SGPT` / `ALT` / `Alanine Aminotransferase` and `FBS` / `Fasting Blood Sugar` / `Hb` / `Potassium` aliases
-- `mmol/L -> mg/dL` (glucose * 18) and `umol/L -> mg/dL` (creatinine * 0.0113) conversions with audit trails
-- Exact numeric boundaries (`45 U/L`, `200 mg/dL`, `400 mg/dL`) and exclusive limits (`<`, `>`, `(low, high)`)
-- Missing age/sex (`patient-p003`) & exact age cutoffs (`18`, `17.999`, `65`, `65.001`)
-- Overlapping ranges & conflicting aliases rejected (`Cannot Be Classified`)
-- Unsupported assays (`Serum Ferritin`), missing units (`WBC`), bounded strings (`<0.01`), `NaN`/`Infinity`, and duplicate measurements in one report
-- Independent urgent alerts firing even when normal ranges cannot be selected
-- 200+ / 15,000+ line noisy documents and adversarial prompt-injection strings neutralized
-- Cross-patient endpoint access denied with `404` and zero PII leakage
-
----
-
-## 12. Observed Artifact Sizes & Execution Timings
-
-Measured directly on the local Windows Python 3.13 / Vite runtime after final edits:
-- **Full Pytest Suite (89 test cases):** `10.99 s` (`89 passed, 0 failed`)
-- **Frontend Production Build (`tsc -b && vite build`):** `7.66 s` (`286,511` bytes served JS, `20,489` bytes served CSS)
-- **Canonical Snapshot Size (`data/database.json`):** `212,733` bytes
-- **Live Server PDF Downloads (`http://127.0.0.1:8001`):** Fatima Khan report `11,300` bytes; Jordan Patel demographic-override report `10,188` bytes (valid `%PDF-` headers)
-
----
-
-## 13. Known Issues and Limitations
-
-1. **Text-Only PDF Support:** OCR is deliberately disabled; image-scanned PDFs require manual transcription or CSV/Markdown export.
-2. **Prototype JSON Storage Concurrency:** Appropriate for single-node demos and small datasets; high-throughput clinical environments require an RDBMS.
-3. **Docker Runtime Unverified Locally:** `docker` is absent on the Windows evaluation machine; Docker files are provided for container-enabled hosts.
-4. **LLM Provider Disabled & Live Calls Unverified:** Runs in deterministic mode (`LLM_PROVIDER=disabled`, `ai_configured=false`); no live Groq/OpenRouter API key was configured during verification.
-5. **Live Chrome DevTools Inspection Not Run:** Chrome remote debugging (`DevToolsActivePort`) was unavailable on the host, leaving visual browser layout checks unexecuted in Chrome.
-
----
-
-## 14. Docker Instructions
+## 12. Docker Instructions
 
 ```bash
 cp .env.example .env
@@ -189,27 +154,28 @@ docker compose up --build
 
 ---
 
-## 15. Local Runtime Status
+## 13. Local Runtime Status
 
 - **Live Local Server:** Running via `.\.venv\Scripts\python.exe run_server.py` at `http://127.0.0.1:8001`, serving both the compiled React SPA (`/`) and FastAPI API (`/api/*`) cleanly without interfering with port `8000`.
 - **External Cloud URL:** Not deployed externally; runs cleanly locally at `http://127.0.0.1:8001`.
 
 ---
 
-## 16. Demo Walkthrough for Evaluators
+## 14. Walkthrough for Evaluators
 
 1. Start the server (`.\.venv\Scripts\python.exe run_server.py`) and open `http://127.0.0.1:8001`.
-2. **Boundary & Conversion Showcase (`patient-p001` — Arjun Mehta):** Under **Choose a sample report**, click **View report** on Arjun Mehta (`Synthetic demo`). Inspect `SGPT` (`ALT`) at `45 U/L` (`Normal`), `Total Cholesterol` at `200 mg/dL` (`Normal`), and `FBS 7.0 mmol/L` converted to `126 mg/dL` (`High`). In **Report assistant**, ask `"Explain ALT"`, `"Is it high?"`, `"What is its reference range?"`, `"Which results are normal?"`, and `"What should I ask my doctor?"`, then open **View sources**.
-3. **Urgent Alert Showcase (`patient-p002` — Fatima Khan):** Click **Switch sample patient** and choose **Fatima Khan** (verifying previous chat history clears). Observe the urgent alert banner for `Fasting Blood Sugar` (`22.5 mmol/L -> 405 mg/dL`) and `Potassium` (`6.3 mmol/L`).
-4. **Missing Demographics Showcase (`patient-p003` — Jordan Patel):** Switch to Jordan Patel. Observe `Hemoglobin`, `Serum Creatinine`, and `ALT` marked `Cannot Be Classified` without guessing, while `Serum Potassium` (`6.4 mmol/L`) still fires `Urgent`. Enter Age `34` and Sex `female`, click **Apply & Re-Analyze** to watch all three re-classify immediately, and click **Reset to Original** to restore.
-5. **Noisy Report & Prompt Injection (`patient-p004` — Viktor Chen):** Switch to Viktor Chen. Inspect `Serum Ferritin`, `WBC` (missing unit), `TSH <0.01`, duplicate `ALT`/`SGPT`, and expand **Document processing notes** to see `218` skipped boilerplate lines and prompt-injection neutralization telemetry.
-6. **Server-Side PDF Export:** Click **Download PDF** to download and verify the generated multi-section clinical PDF (including the `"SYNTHETIC DEMONSTRATION"` disclosure and user-supplied vs original source demographic labels).
+2. **Personal Profile, Upload, Review & Re-entry:** Under **Create your profile**, enter a name and click **Create profile**. Copy the single-display `CLD-...` access code on **Your profile is ready**, click **Continue to my workspace**, upload a PDF or text/CSV lab report, review/correct extracted values in **Review the extracted results**, click **Save and analyze**, test **View original report** and **CityLab** home logo navigation, then **Sign Out** and return using **Sign in with access code**.
+3. **Boundary & Conversion Showcase (`patient-p001` — Arjun Mehta):** Under **Try a sample report**, click **View report** on Arjun Mehta (`Synthetic demo`). Inspect `SGPT` (`ALT`) at `45 U/L` (`Normal`), `Total Cholesterol` at `200 mg/dL` (`Normal`), and `FBS 7.0 mmol/L` converted to `126 mg/dL` (`High`). In **Report assistant**, ask `"Explain ALT"`, `"Is it high?"`, `"What is its reference range?"`, `"Which results are normal?"`, and `"What should I ask my doctor?"`, then open **View sources**.
+4. **Urgent Alert Showcase (`patient-p002` — Fatima Khan):** Click **Switch sample patient** and choose **Fatima Khan** (verifying previous chat history clears). Observe the urgent alert banner for `Fasting Blood Sugar` (`22.5 mmol/L -> 405 mg/dL`) and `Potassium` (`6.3 mmol/L`).
+5. **Missing Demographics Showcase (`patient-p003` — Jordan Patel):** Switch to Jordan Patel. Observe `Hemoglobin`, `Serum Creatinine`, and `ALT` marked `Cannot Be Classified` without guessing, while `Serum Potassium` (`6.4 mmol/L`) still fires `Urgent`. Enter Age `34` and Sex `female`, click **Apply & Re-Analyze** to watch all three re-classify immediately, and click **Reset to Original** to restore.
+6. **Noisy Report & Prompt Injection (`patient-p004` — Viktor Chen):** Switch to Viktor Chen. Inspect `Serum Ferritin`, `WBC` (missing unit), `TSH <0.01`, duplicate `ALT`/`SGPT`, and expand **Document processing notes** to see `218` skipped boilerplate lines and prompt-injection neutralization telemetry.
+7. **Server-Side PDF Export:** Click **Download PDF** to download and verify the generated multi-section clinical PDF (including `"User corrected"` markers when edited, `"SYNTHETIC DEMONSTRATION"` disclosure when synthetic, and user-supplied vs original source demographic labels).
 
 ---
 
-## 17. Future Improvements
+## 15. Future Improvements
 
 - Migrate storage backend interface (`Repository`) to PostgreSQL for multi-instance production deployments while keeping the same Pydantic contract.
-- Add optional OCR pre-processing pipeline with confidence scoring and human review flags for scanned laboratory PDFs.
+- Bundle Tesseract OCR runtime/language packs inside deployment images and add image deskewing for multi-column scanned laboratory layouts.
 - Support longitudinal multi-date trend comparisons for an authorized patient across sequential visits.
 - Add automated Playwright end-to-end browser verification in CI alongside `pytest` and `vite build`.

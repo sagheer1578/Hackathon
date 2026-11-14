@@ -84,9 +84,13 @@ docker compose up --build
 
 ---
 
-## Synthetic Sample Reports (`DEMO_MODE=true`)
+## Personal Profiles, Uploaded Reports, and Demo Mode
 
-When `DEMO_MODE=true` (local default), the landing view presents **Choose a sample report** above a collapsed **Have a private access code?** section so first-time users can open any synthetic demonstration report in one click (`View report`) without typing an access key, and switch samples via **Switch sample patient**. Setting `DEMO_MODE=false` disables `/api/demo/sessions` and rejects demo tokens (`401`).
+- **Personal Profile Workspace (`Create your profile` / `Sign in with access code`):** Any visitor can create a private workspace using their name (`POST /api/auth/register`), receiving a single-display random `CLD-...` access code (150-bit entropy). Only SHA-256 hashes of access codes and 24-hour session tokens are persisted in `data/database.json` (`credentials` and `sessions`). Lost access codes cannot be recovered. Users return later via `POST /api/auth/login` and sign out via `POST /api/auth/logout` (revoking the active session token).
+- **Home Logo Navigation:** Clicking the upper-left **CityLab** logo (`aria-label="CityLab home"`) returns signed-in users to their current profile's `Dashboard` without signing out, switching patients, or clearing saved reports, and resets the welcome view when signed out.
+- **Uploaded Report Reading, Review & Private Storage:** Supports `.pdf` (embedded text via `pypdf`, plus optional local Tesseract OCR fallback for image-only scans), `.png` / `.jpg` / `.jpeg` (via optional local Tesseract OCR), `.txt`, `.md`, `.csv`, and `.json`. Uploaded source files are stored privately under `data/uploads/<patient_id>/<report_id>.<ext>` (never exposed statically) and served strictly to the owning session via `GET /api/reports/{report_id}/source`. After upload, **Review the extracted results** (`PATCH /api/reports/{report_id}/review`) lets users confirm printed name mismatches and fix extracted test names, values, or units with full `User corrected` audit preservation.
+- **OCR Limitation on This Host:** Local `tesseract` is optional and was not installed on this Windows development machine (`ocr_available: false` in `/api/health`). Digital text PDFs, CSV, TXT, Markdown, and JSON reports extract directly; scanned images and image-only PDFs return a clean actionable error unless Tesseract OCR is installed locally (verified in `pytest` using mocked OCR runner and missing-binary scenarios).
+- **Synthetic Sample Reports (`DEMO_MODE=true`):** When `DEMO_MODE=true` (local default), **Try a sample report** stays clearly separate from personal workspaces so evaluators can open any of the 4 fictional personas (`Arjun Mehta`, `Fatima Khan`, `Jordan Patel`, `Viktor Chen`) in one click. Real uploaded non-synthetic reports refuse clinical classification against `synthetic` demo rules (`Cannot Be Classified`). Setting `DEMO_MODE=false` disables `/api/demo/sessions` and rejects demo tokens (`401`).
 
 | Patient ID | Name | Focus Scenario | Provenance |
 |---|---|---|---|
@@ -95,7 +99,7 @@ When `DEMO_MODE=true` (local default), the landing view presents **Choose a samp
 | `patient-p003` | Jordan Patel | Missing age & `unknown` sex (refuses guessing; flags urgent `Potassium` `6.4 mmol/L`) | Synthetic demo |
 | `patient-p004` | Viktor Chen | 200+ boilerplate lines, prompt-injection neutralized, `Serum Ferritin`, missing unit (`WBC`), `<0.01` (`TSH`), duplicate `ALT`/`SGPT` | Synthetic demo |
 
-Each authenticated session only grants access to that patient's reports, assistant queries, demographic updates, and PDF downloads. Attempting to access another patient's `report_id` returns `404 Report not found.` across all report endpoints. Private patient tokens (32+ characters) are configured via `AUTH_TOKENS` and are never printed in documentation or public endpoints.
+Each authenticated session only grants access to that profile's reports, uploaded source documents, assistant queries, demographic/review updates, and PDF downloads. Attempting to access another profile's `report_id` returns `404 Report not found.` across all report endpoints. Optional static tokens configured via `AUTH_TOKENS` (32+ characters) remain supported and are never printed in documentation or public endpoints.
 
 ---
 
@@ -103,16 +107,23 @@ Each authenticated session only grants access to that patient's reports, assista
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Service health, JSON storage readiness, `knowledge_version`, AI config state |
+| `GET` | `/api/health` | Service health, JSON storage readiness, `knowledge_version`, `ocr_available`, AI config state |
 | `GET` | `/api/demo/sessions` | Lists controlled evaluation personas when `DEMO_MODE=true` |
-| `GET` | `/api/session` | Authenticated patient profile and corpus rule counts |
-| `GET` | `/api/reports` | Lists reports belonging strictly to the authenticated patient |
-| `POST` | `/api/reports/upload` | Extracts & persists `.txt`, `.md`, `.csv`, `.json`, or text `.pdf` report |
+| `POST` | `/api/auth/register` | Creates a personal profile, returning single-display `CLD-...` access code & session token |
+| `POST` | `/api/auth/login` | Verifies a saved access code (constant-time SHA-256 check) and issues a session token |
+| `POST` | `/api/auth/logout` | Revokes the active session token |
+| `GET` | `/api/auth/me` | Returns authenticated personal/demo session profile details |
+| `GET` | `/api/session` | Authenticated profile, workspace type, OCR state, and corpus rule counts |
+| `GET` | `/api/reports` | Lists reports belonging strictly to the authenticated profile |
+| `POST` | `/api/reports/upload` | Extracts `.pdf`, `.png`, `.jpg`, `.jpeg`, `.txt`, `.md`, `.csv`, `.json`, saves private source under `data/uploads/` |
+| `PATCH` | `/api/reports/{report_id}/review` | Saves user-verified edits/mismatch confirmation, tracks `user_corrected` & re-analyzes |
 | `POST` | `/api/reports/analyze` | Runs deterministic rules engine (+ optional grounded AI question refinement) |
-| `GET` | `/api/reports/{report_id}` | Full report, patient metadata, telemetry, and verified analysis |
+| `POST` | `/api/reports/{report_id}/analyze` | Re-runs analysis for an owned report ID |
+| `GET` | `/api/reports/{report_id}` | Full report, measurements, metadata, and verified analysis |
 | `GET` | `/api/reports/{report_id}/results` | Verified classification results only |
+| `GET` | `/api/reports/{report_id}/source` | Authenticated inline stream of the private uploaded source document |
 | `POST` | `/api/reports/{report_id}/demographics` | Updates/resets session age & sex and re-evaluates dependent ranges |
-| `POST` | `/api/reports/{report_id}/chat` | Patient-scoped grounded Q&A with safety boundary checks |
+| `POST` | `/api/reports/{report_id}/chat` | Profile-scoped grounded Q&A with safety boundary checks |
 | `GET` | `/api/reports/{report_id}/download` | Streams server-generated ReportLab PDF report |
 
 ---
@@ -135,10 +146,10 @@ Each authenticated session only grants access to that patient's reports, assista
    - `ALT | 20 | mmol/L` -> `Cannot Be Classified` (no documented molar conversion exists for ALT).
 5. **Exact Boundary Precision:**
    - All numeric comparisons use Python `Decimal` rather than binary floating point to avoid `0.1 + 0.2` rounding drift on limits such as `45 U/L`, `200 mg/dL`, `400 mg/dL`, and inclusive/exclusive `[` vs `(` intervals.
-6. **Scanned / Image-Only PDFs:**
-   - OCR is intentionally disabled; scanned image PDFs without an embedded text stream yield a clear `ExtractionError` instructing manual transcription or CSV export rather than silently passing empty text.
+6. **Scanned Images & Image-Only PDFs:**
+   - Digital text PDFs (`pypdf`) extract natively. Image reports (`.png`, `.jpg`, `.jpeg`) and image-only PDFs attempt optional local Tesseract OCR (`OCR_RUNNER` or `tesseract` CLI) and flag extracted rows `needs_review` / `uncertain`. When `tesseract` is unavailable on the host (`ocr_available: false`), uploads fail cleanly (`422`) with an actionable message rather than silently storing blank measurements.
 7. **Corrupted or Ambiguous JSON Persistence:**
-   - If `data/database.json` (or legacy JSON files during migration) is truncated, contains duplicate JSON object keys, or carries an unsupported `schema_version`, `Repository` raises `StorageError` (`503`) and refuses to overwrite disk files or silently fall back to older files.
+   - If `data/database.json` (or legacy JSON files during migration) is truncated, contains duplicate JSON object keys, or carries an unsupported `schema_version`, `Repository` raises `StorageError` (`503`) and refuses to overwrite disk files or silently fall back to older files. Failed report database writes also roll back any newly saved file under `data/uploads/`.
 8. **AI Availability & Grounding Safeguards:**
    - By default (`LLM_PROVIDER=disabled`, no API key configured), the Report Assistant operates in deterministic evidence-only mode and states clearly in the UI that AI assistance is unavailable. Live external LLM calls were not verified because no live API key is configured in the environment. When an approved Groq or `:free` OpenRouter provider is configured, structured responses (`StructuredAIResponse`) and output checks (`validate_ai_text`) reject invented values, wrong-test numbers, fabricated ranges, diagnoses, and treatment advice.
 
@@ -150,4 +161,4 @@ Each authenticated session only grants access to that patient's reports, assista
 .\.venv\Scripts\pytest.exe -v
 ```
 
-Latest verified run: **89 passed, 0 failed** (1 Starlette `httpx` deprecation warning) across engine boundaries, demographic intervals, synthetic-vs-real rule isolation, noisy/injection ingestion, canonical atomic `database.json` persistence & legacy migration & fail-closed corruption/duplicate-key checks, cross-patient authorization (`404`), deterministic assistant intent routing & follow-up context tracking, strict AI safety/value validation & mocked fault fallback, demo allowlist & `DEMO_MODE=false`, and multi-page ReportLab PDF verification.
+Latest verified run: **94 passed, 0 failed** (1 Starlette `httpx` deprecation warning) across engine boundaries, demographic intervals, synthetic-vs-real rule isolation, personal profile registration & access-code login/logout & persistence across restart, private `data/uploads/` source confinement & rollback, text-PDF & mocked-OCR / missing-OCR uploads, inline review edits (`user_corrected` audit + PDF markers), noisy/injection ingestion, canonical atomic `database.json` persistence & legacy migration & fail-closed corruption/duplicate-key checks, cross-profile authorization (`404`), deterministic assistant intent routing & follow-up context tracking, strict AI safety/value validation & mocked fault fallback, demo allowlist & `DEMO_MODE=false`, and multi-page ReportLab PDF verification.

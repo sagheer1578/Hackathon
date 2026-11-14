@@ -3,9 +3,12 @@ import hashlib
 import hmac
 import json
 import os
+import re
+import secrets
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -21,8 +24,8 @@ from starlette.requests import Request
 from .ai import LLMAdapter, answer, compute_analysis_revision, enhance_analysis_with_ai
 from .corpus_parser import ingest_corpus_directory
 from .engine import analyze
-from .ingestion import ExtractionError, MAX_BYTES, extract_report
-from .models import Analysis, Database, Model, Report
+from .ingestion import ExtractionError, MAX_BYTES, MEDIA_TYPES, extract_report, ocr_available
+from .models import AccessCredential, Analysis, Database, Model, Patient, Report, SessionRecord
 from .pdf import generate_pdf
 from .storage import CANONICAL_FILENAME, Repository, StorageError
 
@@ -58,6 +61,23 @@ DEMO_PERSONAS = [
     },
 ]
 
+CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'  # 32 unambiguous symbols -> 5 bits per char
+SESSION_TTL_HOURS = 24
+
+
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+
+def _generate_access_code() -> str:
+    # 30 random symbols from a 32-symbol alphabet = 150 bits of CSPRNG entropy.
+    groups = [''.join(secrets.choice(CODE_ALPHABET) for _ in range(5)) for _ in range(6)]
+    return 'CLD-' + '-'.join(groups)
+
+
+def _generate_session_token() -> str:
+    return 'st-' + secrets.token_urlsafe(32)
+
 
 class PayloadTooLarge(Exception):
     pass
@@ -88,6 +108,14 @@ class BodyLimit:
             )
 
 
+class RegisterRequest(Model):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class LoginRequest(Model):
+    access_code: str = Field(min_length=1, max_length=200)
+
+
 class ChatRequest(Model):
     question: str = Field(min_length=1, max_length=1200)
     active_measurement_ids: list[str] = Field(default_factory=list, max_length=10)
@@ -101,6 +129,20 @@ class AnalyzeRequest(Model):
 class DemographicsUpdateRequest(Model):
     age_at_report: Decimal | None = Field(default=None, ge=0, le=150)
     sex_at_report: Literal['female', 'male', 'unknown'] = 'unknown'
+
+
+class ReviewMeasurementEdit(Model):
+    id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    test: str = Field(min_length=1, max_length=160)
+    value: str = Field(max_length=80)
+    unit: str = Field(default='', max_length=80)
+
+
+class ReviewUpdateRequest(Model):
+    measurements: list[ReviewMeasurementEdit] = Field(min_length=1, max_length=500)
+    age_at_report: Decimal | None = Field(default=None, ge=0, le=150)
+    sex_at_report: Literal['female', 'male', 'unknown'] | None = None
+    confirm_name_mismatch: bool = False
 
 
 def create_app(
@@ -127,7 +169,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_methods=['GET', 'POST'],
+        allow_methods=['GET', 'POST', 'PATCH'],
         allow_headers=['Authorization', 'Content-Type'],
     )
 
@@ -169,6 +211,7 @@ def create_app(
     hashed_tokens = {hashlib.sha256(k.encode()).digest(): v for k, v in auth_tokens.items()}
     bearer = HTTPBearer(auto_error=False)
     buckets: dict[str, deque[float]] = defaultdict(deque)
+    login_buckets: dict[str, deque[float]] = defaultdict(deque)
     bucket_lock = threading.Lock()
 
     @app.middleware('http')
@@ -180,26 +223,46 @@ def create_app(
         response.headers['X-Frame-Options'] = 'DENY'
         return response
 
-    def authorized(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> str:
-        host = request.client.host if request.client else 'unknown'
+    def _enforce_rate_limit(bucket_map: dict[str, deque[float]], host: str, limit: int) -> None:
         now = time.monotonic()
         with bucket_lock:
-            if len(buckets) > 10000:
-                for key in list(buckets):
-                    if not buckets[key] or buckets[key][-1] < now - 60:
-                        del buckets[key]
-            queue = buckets[host]
+            if len(bucket_map) > 10000:
+                for key in list(bucket_map):
+                    if not bucket_map[key] or bucket_map[key][-1] < now - 60:
+                        del bucket_map[key]
+            queue = bucket_map[host]
             while queue and queue[0] < now - 60:
                 queue.popleft()
-            if len(queue) >= 120:
+            if len(queue) >= limit:
                 raise HTTPException(429, 'Too many requests. Please wait one minute.', headers={'Retry-After': '60'})
             queue.append(now)
 
-        supplied = hashlib.sha256((credentials.credentials if credentials else '').encode()).digest()
+    def _resolve_bearer(raw_token: str) -> tuple[str, str | None] | None:
+        if not raw_token:
+            return None
+        supplied = hashlib.sha256(raw_token.encode()).digest()
         for digest, patient_id in hashed_tokens.items():
             if hmac.compare_digest(digest, supplied):
-                return patient_id
-        raise HTTPException(401, 'A valid patient access key is required.', headers={'WWW-Authenticate': 'Bearer'})
+                return patient_id, None
+
+        db = repo.read()
+        tok_hex = _sha256_hex(raw_token)
+        now = datetime.now(timezone.utc)
+        for sess in db.sessions.values():
+            if hmac.compare_digest(sess.token_sha256, tok_hex) and sess.expires_at > now:
+                return sess.patient_id, sess.session_id
+        for cred in db.credentials.values():
+            if hmac.compare_digest(cred.code_sha256, tok_hex):
+                return cred.patient_id, None
+        return None
+
+    def authorized(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> str:
+        host = request.client.host if request.client else 'unknown'
+        _enforce_rate_limit(buckets, host, 120)
+        resolved = _resolve_bearer(credentials.credentials if credentials else '')
+        if resolved is not None:
+            return resolved[0]
+        raise HTTPException(401, 'A valid patient access code is required.', headers={'WWW-Authenticate': 'Bearer'})
 
     def get_report(report_id: str, patient_id: str) -> tuple[Database, Report]:
         db = repo.read()
@@ -220,6 +283,33 @@ def create_app(
 
         repo.update(save)
         return result
+
+    def _build_session_payload(db: Database, patient: Patient) -> dict:
+        return {
+            'patient': patient,
+            'knowledge_ready': db.reviewed and bool(db.test_aliases),
+            'knowledge_version': db.knowledge_version,
+            'knowledge_provenance': db.knowledge_provenance,
+            'synthetic_demo': bool(
+                demo_mode and db.knowledge_provenance == 'synthetic' and patient.profile_type == 'demo'
+            ),
+            'ocr_available': ocr_available(),
+            'tests_count': len(db.test_aliases),
+            'ranges_count': len(db.reference_ranges),
+            'urgent_rules_count': len(db.urgent_thresholds),
+            'safety_rules_count': len(db.safety_rules),
+            'ai_configured': adapter.is_configured(),
+            'llm_provider': adapter.provider,
+        }
+
+    def _build_detail_payload(db: Database, report: Report, analysis: Analysis) -> dict:
+        return {
+            'report': report,
+            'patient': db.patients[report.patient_id],
+            'metadata': db.report_metadata.get(report.id),
+            'analysis': analysis,
+            'analysis_revision': compute_analysis_revision(report, analysis),
+        }
 
     @app.exception_handler(StorageError)
     @app.exception_handler(Timeout)
@@ -243,6 +333,7 @@ def create_app(
             'knowledge_version': db.knowledge_version,
             'knowledge_provenance': db.knowledge_provenance,
             'synthetic_demo': demo_mode and db.knowledge_provenance == 'synthetic',
+            'ocr_available': ocr_available(),
             'storage_mode': 'canonical-atomic-snapshot',
             'snapshot_file': CANONICAL_FILENAME,
             'patients_count': len(db.patients),
@@ -261,25 +352,145 @@ def create_app(
         ]
         return {'enabled': True, 'personas': available}
 
+    @app.post('/api/auth/register', status_code=201)
+    def register_profile(request: Request, payload: RegisterRequest):
+        host = request.client.host if request.client else 'unknown'
+        _enforce_rate_limit(login_buckets, host, 25)
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in payload.name):
+            raise HTTPException(422, 'Enter a valid full name without control characters.')
+        clean_name = ' '.join(payload.name.split())
+        if not clean_name:
+            raise HTTPException(422, 'Enter a valid full name.')
+
+        patient_id = 'p-' + secrets.token_hex(12)
+        access_code = _generate_access_code()
+        session_token = _generate_session_token()
+        session_id = 's-' + secrets.token_hex(12)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=SESSION_TTL_HOURS)
+
+        patient = Patient(
+            id=patient_id,
+            name=clean_name,
+            profile_type='personal',
+            created_at=now,
+        )
+        credential = AccessCredential(
+            patient_id=patient_id,
+            code_sha256=_sha256_hex(access_code),
+            created_at=now,
+        )
+        sess = SessionRecord(
+            session_id=session_id,
+            patient_id=patient_id,
+            token_sha256=_sha256_hex(session_token),
+            created_at=now,
+            expires_at=expires_at,
+        )
+
+        def create_personal(db: Database) -> None:
+            for sid in [k for k, v in db.sessions.items() if v.expires_at <= now]:
+                del db.sessions[sid]
+            db.patients[patient_id] = patient
+            db.credentials[patient_id] = credential
+            db.sessions[session_id] = sess
+
+        repo.update(create_personal)
+        return {
+            'profile': patient,
+            'access_code': access_code,
+            'session_token': session_token,
+            'expires_at': expires_at,
+        }
+
+    @app.post('/api/auth/login')
+    def login_with_code(request: Request, payload: LoginRequest):
+        host = request.client.host if request.client else 'unknown'
+        _enforce_rate_limit(login_buckets, host, 25)
+
+        raw_code = payload.access_code.strip()
+        invalid_msg = 'We couldn’t find a profile with that access code. Check the code and try again.'
+        if not raw_code:
+            raise HTTPException(401, invalid_msg)
+
+        db = repo.read()
+        code_hex = _sha256_hex(raw_code)
+        code_digest = hashlib.sha256(raw_code.encode()).digest()
+
+        matched_patient_id: str | None = None
+        for cred in db.credentials.values():
+            if hmac.compare_digest(cred.code_sha256, code_hex):
+                matched_patient_id = cred.patient_id
+                break
+        if matched_patient_id is None:
+            for digest, pid in hashed_tokens.items():
+                if hmac.compare_digest(digest, code_digest):
+                    matched_patient_id = pid
+                    break
+
+        if matched_patient_id is None or matched_patient_id not in db.patients:
+            raise HTTPException(401, invalid_msg)
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=SESSION_TTL_HOURS)
+        session_token = _generate_session_token()
+        session_id = 's-' + secrets.token_hex(12)
+        sess = SessionRecord(
+            session_id=session_id,
+            patient_id=matched_patient_id,
+            token_sha256=_sha256_hex(session_token),
+            created_at=now,
+            expires_at=expires_at,
+        )
+
+        def save_session(current: Database) -> None:
+            if matched_patient_id not in current.patients:
+                raise HTTPException(401, invalid_msg)
+            for sid in [k for k, v in current.sessions.items() if v.expires_at <= now]:
+                del current.sessions[sid]
+            current.sessions[session_id] = sess
+
+        updated_db = repo.update(save_session)
+        return {
+            'profile': updated_db.patients[matched_patient_id],
+            'session_token': session_token,
+            'expires_at': expires_at,
+        }
+
+    @app.post('/api/auth/logout')
+    def logout_session(
+        patient_id: str = Depends(authorized),
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    ):
+        raw_token = credentials.credentials if credentials else ''
+        tok_hex = _sha256_hex(raw_token) if raw_token else ''
+        if tok_hex:
+            def revoke(current: Database) -> None:
+                for sid in [
+                    k
+                    for k, v in current.sessions.items()
+                    if v.patient_id == patient_id and hmac.compare_digest(v.token_sha256, tok_hex)
+                ]:
+                    del current.sessions[sid]
+
+            repo.update(revoke)
+        return {'status': 'signed_out'}
+
+    @app.get('/api/auth/me')
+    def auth_me(patient_id: str = Depends(authorized)):
+        db = repo.read()
+        patient = db.patients.get(patient_id)
+        if not patient:
+            raise HTTPException(403, 'This access code has no provisioned profile.')
+        return _build_session_payload(db, patient)
+
     @app.get('/api/session')
     def session(patient_id: str = Depends(authorized)):
         db = repo.read()
         patient = db.patients.get(patient_id)
         if not patient:
             raise HTTPException(403, 'This access key has no provisioned patient record.')
-        return {
-            'patient': patient,
-            'knowledge_ready': db.reviewed and bool(db.test_aliases),
-            'knowledge_version': db.knowledge_version,
-            'knowledge_provenance': db.knowledge_provenance,
-            'synthetic_demo': demo_mode and db.knowledge_provenance == 'synthetic',
-            'tests_count': len(db.test_aliases),
-            'ranges_count': len(db.reference_ranges),
-            'urgent_rules_count': len(db.urgent_thresholds),
-            'safety_rules_count': len(db.safety_rules),
-            'ai_configured': adapter.is_configured(),
-            'llm_provider': adapter.provider,
-        }
+        return _build_session_payload(db, patient)
 
     @app.get('/api/reports')
     def list_reports(patient_id: str = Depends(authorized)):
@@ -289,49 +500,164 @@ def create_app(
             if r.patient_id != patient_id:
                 continue
             meta = db.report_metadata.get(r.id)
+            uploaded_at = r.uploaded_at or (meta.ingested_at if meta else None)
             items.append(
                 {
                     'id': r.id,
+                    'title': r.title or r.source_file or r.id,
                     'report_date': r.report_date,
+                    'uploaded_at': uploaded_at,
+                    'review_status': r.review_status,
+                    'name_mismatch_warning': r.name_mismatch_warning,
                     'tests': len(r.measurements),
                     'synthetic': r.synthetic,
                     'source_file': r.source_file or (meta.source_file if meta else ''),
+                    'has_source_file': bool(r.stored_filename),
                     'noise_lines_skipped': meta.noise_lines_skipped if meta else 0,
                     'prompt_injection_detected': meta.prompt_injection_detected if meta else False,
                     'issues_count': len(r.issues),
                 }
             )
-        items.sort(key=lambda x: str(x['report_date'] or ''), reverse=True)
+        items.sort(key=lambda x: str(x['uploaded_at'] or x['report_date'] or ''), reverse=True)
         return {'reports': items}
 
     @app.post('/api/reports/upload', status_code=201)
     def upload(file: UploadFile = File(...), patient_id: str = Depends(authorized)):
-        if patient_id not in repo.read().patients:
+        db = repo.read()
+        patient = db.patients.get(patient_id)
+        if not patient:
             raise HTTPException(403, 'Patient is not provisioned.')
         content = file.file.read(MAX_BYTES + 1)
+        clean_filename = file.filename or 'upload.txt'
+        suffix = Path(clean_filename).suffix.lower()
+
         report, metadata, _ = extract_report(
             content,
-            file.filename or 'upload.txt',
+            clean_filename,
             authorized_patient=patient_id,
             synthetic=False,
+            authenticated_patient_name=patient.name,
+            strict_patient_id=False,
         )
+        now = datetime.now(timezone.utc)
+        report.title = report.source_file
+        report.uploaded_at = now
+        report.source_media_type = MEDIA_TYPES.get(suffix, 'application/octet-stream')
+        stored_rel = repo.save_upload_file(patient_id, report.id, suffix, content)
+        report.stored_filename = stored_rel
 
-        def save(db: Database) -> None:
-            existing = db.reports.get(report.id)
-            if existing and existing.patient_id != patient_id:
-                raise HTTPException(409, 'Report identifier conflict.')
-            if existing and existing != report:
+        initial_analysis = analyze(report, db)
+
+        def save(current: Database) -> None:
+            existing = current.reports.get(report.id)
+            if existing:
+                if existing.patient_id != patient_id:
+                    raise HTTPException(409, 'Report identifier conflict.')
+                same_source = (
+                    existing.source_hash == report.source_hash
+                    and existing.source_file == report.source_file
+                    and not existing.demographics_overridden
+                    and not any(m.user_corrected for m in existing.measurements)
+                )
+                if same_source:
+                    return
                 raise HTTPException(409, 'Existing report differs; review required.')
-            db.reports[report.id] = report
-            db.report_metadata[report.id] = metadata
+            ana = (
+                initial_analysis
+                if current.knowledge_version == db.knowledge_version
+                else analyze(report, current)
+            )
+            current.reports[report.id] = report
+            current.report_metadata[report.id] = metadata
+            current.analysis_results[report.id] = ana
 
-        repo.update(save)
+        try:
+            repo.update(save)
+        except Exception:
+            repo.remove_upload_file(stored_rel)
+            raise
+
         return {
             'report_id': report.id,
+            'review_status': report.review_status,
+            'name_mismatch_warning': report.name_mismatch_warning,
             'issues': report.issues,
             'noise_lines_skipped': metadata.noise_lines_skipped,
             'prompt_injection_detected': metadata.prompt_injection_detected,
         }
+
+    @app.patch('/api/reports/{report_id}/review')
+    def review_report(
+        report_id: str,
+        payload: ReviewUpdateRequest,
+        patient_id: str = Depends(authorized),
+    ):
+        get_report(report_id, patient_id)
+        updated_holder: dict[str, object] = {}
+
+        def mutate(current: Database) -> None:
+            rep = current.reports.get(report_id)
+            if rep is None or rep.patient_id != patient_id:
+                raise HTTPException(404, 'Report not found.')
+            if rep.name_mismatch_warning and not rep.name_mismatch_confirmed and not payload.confirm_name_mismatch:
+                raise HTTPException(
+                    422,
+                    'Confirm that this report belongs to your profile because the printed patient name differs.',
+                )
+
+            existing_ids = [m.id for m in rep.measurements]
+            incoming_ids = [m.id for m in payload.measurements]
+            if existing_ids != incoming_ids:
+                raise HTTPException(422, 'Review measurements must match the extracted report rows.')
+
+            now = datetime.now(timezone.utc)
+            by_id = {m.id: m for m in rep.measurements}
+            for edit in payload.measurements:
+                orig = by_id[edit.id]
+                changed = (
+                    edit.test != orig.test
+                    or edit.value != orig.value
+                    or edit.unit != orig.unit
+                )
+                if changed:
+                    if orig.original_test is None:
+                        orig.original_test = orig.test
+                    if orig.original_value is None:
+                        orig.original_value = orig.value
+                    if orig.original_unit is None:
+                        orig.original_unit = orig.unit
+                    orig.test = edit.test
+                    orig.value = edit.value
+                    orig.unit = edit.unit
+                    orig.user_corrected = True
+                    orig.corrected_at = now
+                    orig.issue = None
+                orig.uncertain = False
+
+            if 'age_at_report' in payload.model_fields_set:
+                rep.age_at_report = payload.age_at_report
+            if 'sex_at_report' in payload.model_fields_set and payload.sex_at_report is not None:
+                rep.sex_at_report = payload.sex_at_report
+            rep.demographics_overridden = (
+                rep.age_at_report != rep.original_age_at_report
+                or rep.sex_at_report != rep.original_sex_at_report
+            )
+
+            if payload.confirm_name_mismatch or rep.name_mismatch_warning is None:
+                rep.name_mismatch_confirmed = True
+            rep.review_status = 'ready'
+            rep.reviewed_at = now
+
+            new_analysis = analyze(rep, current)
+            current.reports[report_id] = rep
+            current.analysis_results[report_id] = new_analysis
+            updated_holder['report'] = rep
+            updated_holder['analysis'] = new_analysis
+
+        updated_db = repo.update(mutate)
+        rep_out: Report = updated_holder['report']  # type: ignore[assignment]
+        ana_out: Analysis = updated_holder['analysis']  # type: ignore[assignment]
+        return _build_detail_payload(updated_db, rep_out, ana_out)
 
     @app.post('/api/reports/analyze')
     async def analyze_report(payload: AnalyzeRequest, patient_id: str = Depends(authorized)):
@@ -347,22 +673,39 @@ def create_app(
                 analysis = enhanced
         return analysis
 
+    @app.post('/api/reports/{report_id}/analyze')
+    async def analyze_report_by_id(report_id: str, patient_id: str = Depends(authorized)):
+        return await analyze_report(AnalyzeRequest(report_id=report_id), patient_id)
+
     @app.get('/api/reports/{report_id}')
     def report_detail(report_id: str, patient_id: str = Depends(authorized)):
         db, report = get_report(report_id, patient_id)
         analysis = current_analysis(db, report)
-        return {
-            'report': report,
-            'patient': db.patients[patient_id],
-            'metadata': db.report_metadata.get(report_id),
-            'analysis': analysis,
-            'analysis_revision': compute_analysis_revision(report, analysis),
-        }
+        return _build_detail_payload(db, report, analysis)
 
     @app.get('/api/reports/{report_id}/results')
     def report_results(report_id: str, patient_id: str = Depends(authorized)):
         db, report = get_report(report_id, patient_id)
         return current_analysis(db, report)
+
+    @app.get('/api/reports/{report_id}/source')
+    def report_source(report_id: str, patient_id: str = Depends(authorized)):
+        _, report = get_report(report_id, patient_id)
+        if not report.stored_filename:
+            raise HTTPException(404, 'Original source document is not available for this report.')
+        try:
+            source_path = repo.read_upload_file(report.stored_filename, patient_id)
+        except FileNotFoundError:
+            raise HTTPException(404, 'Original source document could not be found.') from None
+        safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', report.source_file or f'{report.id}')
+        return Response(
+            source_path.read_bytes(),
+            media_type=report.source_media_type or 'application/octet-stream',
+            headers={
+                'Content-Disposition': f'inline; filename="{safe_name}"',
+                'Content-Security-Policy': "default-src 'none'; sandbox",
+            },
+        )
 
     @app.post('/api/reports/{report_id}/chat')
     async def chat(report_id: str, payload: ChatRequest, patient_id: str = Depends(authorized)):
@@ -438,13 +781,7 @@ def create_app(
         updated_db = repo.update(mutate)
         rep_out: Report = updated_holder['report']  # type: ignore[assignment]
         ana_out: Analysis = updated_holder['analysis']  # type: ignore[assignment]
-        return {
-            'report': rep_out,
-            'patient': updated_db.patients[patient_id],
-            'metadata': updated_db.report_metadata.get(report_id),
-            'analysis': ana_out,
-            'analysis_revision': compute_analysis_revision(rep_out, ana_out),
-        }
+        return _build_detail_payload(updated_db, rep_out, ana_out)
 
     frontend_dist = Path(__file__).resolve().parent.parent.parent / 'frontend' / 'dist'
     if (frontend_dist / 'index.html').is_file() and (frontend_dist / 'assets').is_dir():
@@ -452,7 +789,15 @@ def create_app(
 
         @app.get('/{full_path:path}', include_in_schema=False)
         def serve_spa(full_path: str):
-            if full_path == 'api' or full_path.startswith('api/'):
+            norm = full_path.lstrip('/')
+            if (
+                norm == 'api'
+                or norm.startswith('api/')
+                or norm == 'uploads'
+                or norm.startswith('uploads/')
+                or norm == 'data'
+                or norm.startswith('data/')
+            ):
                 raise HTTPException(404, 'Endpoint not found.')
             return FileResponse(frontend_dist / 'index.html')
 

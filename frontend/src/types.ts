@@ -13,6 +13,21 @@ export interface Patient {
   name: string;
   age: string | null;
   sex: string;
+  profile_type?: 'demo' | 'personal';
+  created_at?: string | null;
+}
+
+export interface AuthRegisterResponse {
+  profile: Patient;
+  access_code: string;
+  session_token: string;
+  expires_at: string;
+}
+
+export interface AuthLoginResponse {
+  profile: Patient;
+  session_token: string;
+  expires_at: string;
 }
 
 export interface DemoPersona {
@@ -35,14 +50,20 @@ export interface Session {
   safety_rules_count: number;
   ai_configured: boolean;
   llm_provider: string;
+  ocr_available?: boolean;
 }
 
 export interface ReportSummary {
   id: string;
+  title?: string;
   report_date: string | null;
+  uploaded_at?: string | null;
+  review_status?: 'ready' | 'needs_review';
+  name_mismatch_warning?: string | null;
   tests: number;
   synthetic: boolean;
   source_file?: string;
+  has_source_file?: boolean;
   noise_lines_skipped?: number;
   prompt_injection_detected?: boolean;
   issues_count?: number;
@@ -78,6 +99,21 @@ export interface Result {
   evidence: Evidence[];
 }
 
+export interface MeasurementItem {
+  id: string;
+  test: string;
+  value: string;
+  unit: string;
+  evidence?: Evidence;
+  issue?: string | null;
+  original_test?: string | null;
+  original_value?: string | null;
+  original_unit?: string | null;
+  user_corrected?: boolean;
+  corrected_at?: string | null;
+  uncertain?: boolean;
+}
+
 export interface Detail {
   patient: Patient;
   metadata: ReportMetadata | null;
@@ -85,12 +121,24 @@ export interface Detail {
   report: {
     id: string;
     patient_id: string;
+    title?: string;
     report_date: string | null;
+    uploaded_at?: string | null;
+    review_status?: 'ready' | 'needs_review';
+    reviewed_at?: string | null;
     age_at_report: string | null;
     sex_at_report: string;
     original_age_at_report: string | null;
     original_sex_at_report: string;
     demographics_overridden: boolean;
+    printed_patient_name?: string | null;
+    printed_patient_id?: string | null;
+    name_mismatch_warning?: string | null;
+    name_mismatch_confirmed?: boolean;
+    stored_filename?: string | null;
+    source_media_type?: string | null;
+    has_source_file?: boolean;
+    measurements?: MeasurementItem[];
     issues: string[];
     source_file: string;
     synthetic: boolean;

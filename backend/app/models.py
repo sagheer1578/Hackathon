@@ -20,6 +20,22 @@ class Patient(Model):
     name: str = Field(min_length=1, max_length=160)
     age: Decimal | None = Field(default=None, ge=0, le=150)
     sex: Literal['female', 'male', 'unknown'] = 'unknown'
+    profile_type: Literal['demo', 'personal'] = 'demo'
+    created_at: datetime | None = None
+
+
+class AccessCredential(Model):
+    patient_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    code_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SessionRecord(Model):
+    session_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    patient_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    token_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: datetime
 
 
 class Measurement(Model):
@@ -29,6 +45,12 @@ class Measurement(Model):
     unit: str = Field(default='', max_length=80)
     evidence: Evidence
     issue: str | None = None
+    original_test: str | None = Field(default=None, max_length=160)
+    original_value: str | None = Field(default=None, max_length=80)
+    original_unit: str | None = Field(default=None, max_length=80)
+    user_corrected: bool = False
+    corrected_at: datetime | None = None
+    uncertain: bool = False
 
 
 KnowledgeProvenance = Literal['synthetic', 'organizer_unreviewed', 'organizer_reviewed']
@@ -37,12 +59,22 @@ KnowledgeProvenance = Literal['synthetic', 'organizer_unreviewed', 'organizer_re
 class Report(Model):
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
     patient_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
+    title: str = Field(default='', max_length=240)
     report_date: date | None = None
+    uploaded_at: datetime | None = None
     age_at_report: Decimal | None = Field(default=None, ge=0, le=150)
     sex_at_report: Literal['female', 'male', 'unknown'] = 'unknown'
     original_age_at_report: Decimal | None = Field(default=None, ge=0, le=150)
     original_sex_at_report: Literal['female', 'male', 'unknown'] = 'unknown'
     demographics_overridden: bool = False
+    review_status: Literal['ready', 'needs_review'] = 'ready'
+    reviewed_at: datetime | None = None
+    printed_patient_name: str | None = Field(default=None, max_length=160)
+    printed_patient_id: str | None = Field(default=None, max_length=160)
+    name_mismatch_warning: str | None = Field(default=None, max_length=500)
+    name_mismatch_confirmed: bool = False
+    stored_filename: str | None = Field(default=None, max_length=240)
+    source_media_type: str | None = Field(default=None, max_length=120)
     measurements: list[Measurement] = Field(min_length=1, max_length=500)
     issues: list[str] = Field(default_factory=list)
     source_file: str = ''
@@ -187,6 +219,8 @@ class Database(Model):
     reviewed: bool = False
     knowledge_provenance: KnowledgeProvenance = 'organizer_reviewed'
     patients: dict[str, Patient] = Field(default_factory=dict)
+    credentials: dict[str, AccessCredential] = Field(default_factory=dict)
+    sessions: dict[str, SessionRecord] = Field(default_factory=dict)
     reports: dict[str, Report] = Field(default_factory=dict)
     report_metadata: dict[str, ReportMetadata] = Field(default_factory=dict)
     test_aliases: dict[str, TestAliasRecord] = Field(default_factory=dict)
@@ -200,6 +234,10 @@ class Database(Model):
     def integrity(self):
         if any(key != p.id for key, p in self.patients.items()):
             raise ValueError('Patient dictionary key mismatch')
+        if any(key != c.patient_id or c.patient_id not in self.patients for key, c in self.credentials.items()):
+            raise ValueError('Invalid credential-patient relationship')
+        if any(key != s.session_id or s.patient_id not in self.patients for key, s in self.sessions.items()):
+            raise ValueError('Invalid session-patient relationship')
         if any(key != r.id or r.patient_id not in self.patients for key, r in self.reports.items()):
             raise ValueError('Invalid report-patient relationship')
         for key, meta in self.report_metadata.items():

@@ -8,15 +8,19 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  Copy,
   Download,
+  ExternalLink,
   FileText,
   FlaskConical,
+  KeyRound,
   LayoutDashboard,
   LoaderCircle,
   LockKeyhole,
   LogOut,
   Menu,
   MessageSquare,
+  Pencil,
   RefreshCw,
   Search,
   Send,
@@ -24,9 +28,21 @@ import {
   ShieldCheck,
   Upload,
   UserCheck,
+  UserPlus,
   X,
 } from 'lucide-react';
-import type { ChatMessage, DemoPersona, Detail, ReportSummary, Result, Session, Status } from './types';
+import type {
+  AuthLoginResponse,
+  AuthRegisterResponse,
+  ChatMessage,
+  DemoPersona,
+  Detail,
+  MeasurementItem,
+  ReportSummary,
+  Result,
+  Session,
+  Status,
+} from './types';
 import './styles.css';
 
 const STATUSES: Status[] = ['Normal', 'Low', 'High', 'Urgent', 'Cannot Be Classified'];
@@ -74,25 +90,40 @@ function formatDate(s: string | null): string {
   }).format(parsed);
 }
 
-function Brand() {
+function Brand({ onHome }: { onHome?: () => void }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-teal-200 bg-teal-50 text-teal-700">
+    <button
+      type="button"
+      onClick={onHome}
+      aria-label="CityLab home"
+      className="group flex items-center gap-3 rounded-lg p-1 -m-1 text-left transition-colors hover:bg-slate-50"
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-teal-200 bg-teal-50 text-teal-700 group-hover:border-teal-300">
         <FlaskConical size={20} strokeWidth={1.8} />
       </span>
       <div className="leading-tight">
         <div className="text-lg font-bold tracking-tight text-slate-900">CityLab</div>
         <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Diagnostics</div>
       </div>
-    </div>
+    </button>
   );
 }
 
-function EvidenceDrawer({ result }: { result: Result }) {
+function EvidenceDrawer({ result, measurement }: { result: Result; measurement?: MeasurementItem }) {
   return (
     <div className="border-b border-slate-200 bg-slate-50 px-5 py-5 text-slate-700 sm:px-6">
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="min-w-0 space-y-4">
+          {measurement?.user_corrected && (
+            <div className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-900">
+              <span className="font-semibold">User corrected</span>
+              {' — originally extracted: '}
+              <span className="font-mono">
+                {measurement.original_test || measurement.test}: {measurement.original_value ?? measurement.value}{' '}
+                {measurement.original_unit ?? measurement.unit}
+              </span>
+            </div>
+          )}
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
               Plain-Language Explanation
@@ -150,9 +181,30 @@ function EvidenceDrawer({ result }: { result: Result }) {
   );
 }
 
+interface ReviewRowDraft {
+  id: string;
+  test: string;
+  value: string;
+  unit: string;
+  excerpt: string;
+  uncertain: boolean;
+  issue: string | null;
+  user_corrected: boolean;
+  original_test: string | null;
+  original_value: string | null;
+  original_unit: string | null;
+}
+
 function App() {
   const [accessKey, setAccessKey] = useState('');
   const [draftKey, setDraftKey] = useState('');
+  const [profileName, setProfileName] = useState('');
+  const [registerBusy, setRegisterBusy] = useState(false);
+  const [registerError, setRegisterError] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [createdProfile, setCreatedProfile] = useState<AuthRegisterResponse | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
+
   const [demoState, setDemoState] = useState<DemoState>('loading');
   const [personas, setPersonas] = useState<DemoPersona[]>([]);
   const [session, setSession] = useState<Session | null>(null);
@@ -165,11 +217,18 @@ function App() {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState<string>('All results');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewRows, setReviewRows] = useState<ReviewRowDraft[]>([]);
+  const [reviewAge, setReviewAge] = useState('');
+  const [reviewSex, setReviewSex] = useState<'female' | 'male' | 'unknown'>('unknown');
+  const [confirmMismatch, setConfirmMismatch] = useState(false);
 
   const [question, setQuestion] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -184,6 +243,7 @@ function App() {
   const requestVersionRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const autoReviewReportIdRef = useRef('');
 
   const loadDemoSessions = useCallback(() => {
     setDemoState('loading');
@@ -233,6 +293,28 @@ function App() {
     return response;
   }
 
+  function syncReviewDraft(data: Detail) {
+    const items = data.report.measurements || [];
+    setReviewRows(
+      items.map((m) => ({
+        id: m.id,
+        test: m.test,
+        value: m.value,
+        unit: m.unit,
+        excerpt: m.evidence?.excerpt || '',
+        uncertain: Boolean(m.uncertain),
+        issue: m.issue ?? null,
+        user_corrected: Boolean(m.user_corrected),
+        original_test: m.original_test ?? null,
+        original_value: m.original_value ?? null,
+        original_unit: m.original_unit ?? null,
+      }))
+    );
+    setReviewAge(data.report.age_at_report ?? '');
+    setReviewSex((data.report.sex_at_report as 'female' | 'male' | 'unknown') || 'unknown');
+    setConfirmMismatch(Boolean(data.report.name_mismatch_confirmed));
+  }
+
   function resetPatientWorkspaceState() {
     abortRef.current?.abort();
     const nextController = new AbortController();
@@ -246,6 +328,10 @@ function App() {
     setActiveMeasurementIds([]);
     setAnalysisRevision('');
     setExpandedRowId(null);
+    setReviewOpen(false);
+    setReviewRows([]);
+    setConfirmMismatch(false);
+    setUploadStatus('');
     setStatusFilter('All results');
     setSearchQuery('');
     setQuestion('');
@@ -255,8 +341,8 @@ function App() {
     return { controller: nextController, version };
   }
 
-  async function authenticateWithToken(tokenToUse: string) {
-    if (!tokenToUse) return;
+  async function authenticateWithToken(tokenToUse: string, silentError = false): Promise<boolean> {
+    if (!tokenToUse) return false;
     const { controller, version } = resetPatientWorkspaceState();
     setBusy(true);
     try {
@@ -264,18 +350,22 @@ function App() {
         await apiFetch('/session', {}, tokenToUse, controller.signal)
       ).json();
       const reportList = await (await apiFetch('/reports', {}, tokenToUse, controller.signal)).json();
-      if (version !== requestVersionRef.current) return;
+      if (version !== requestVersionRef.current) return false;
       setAccessKey(tokenToUse);
       setDraftKey('');
+      setLoginError('');
+      setRegisterError('');
       setSession(currentSession);
       setReports(reportList.reports || []);
       setSelectedReportId(reportList.reports?.[0]?.id || '');
       setPage('Dashboard');
+      return true;
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return;
-      if (version === requestVersionRef.current) {
+      if ((err as Error).name === 'AbortError') return false;
+      if (version === requestVersionRef.current && !silentError) {
         setError((err as Error).message);
       }
+      return false;
     } finally {
       if (version === requestVersionRef.current) {
         setBusy(false);
@@ -283,19 +373,111 @@ function App() {
     }
   }
 
-  function handleLoginSubmit(e: React.FormEvent) {
+  async function handleCreateProfile(e: React.FormEvent) {
     e.preventDefault();
-    authenticateWithToken(draftKey.trim());
+    const trimmedName = profileName.trim();
+    if (!trimmedName || registerBusy || busy) return;
+    setRegisterError('');
+    setLoginError('');
+    setError('');
+    setRegisterBusy(true);
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmedName }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body?.detail || 'Could not create your profile. Please check your name and try again.');
+      }
+      setCreatedProfile(body as AuthRegisterResponse);
+      setCopiedCode(false);
+      setProfileName('');
+    } catch (err) {
+      setRegisterError((err as Error).message);
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
+  async function handleCopyCode() {
+    if (!createdProfile?.access_code) return;
+    try {
+      await navigator.clipboard.writeText(createdProfile.access_code);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2500);
+    } catch {
+      setRegisterError('Copy is unavailable in this browser context. Please select and copy the code manually.');
+    }
+  }
+
+  async function handleContinueAfterCreate() {
+    if (!createdProfile || busy) return;
+    const ok = await authenticateWithToken(createdProfile.session_token);
+    if (ok) {
+      setCreatedProfile(null);
+      setCopiedCode(false);
+    }
+  }
+
+  async function handleLoginSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const entered = draftKey.trim();
+    if (!entered || busy) return;
+    setError('');
+    setLoginError('');
+    setRegisterError('');
+    setBusy(true);
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_code: entered }),
+      });
+      if (response.ok) {
+        const data: AuthLoginResponse = await response.json();
+        await authenticateWithToken(data.session_token);
+        return;
+      }
+      let message = 'We couldn’t find a profile with that access code. Check the code and try again.';
+      try {
+        const body = await response.json();
+        if (body?.detail) message = body.detail;
+      } catch {
+        // Non-JSON proxy error
+      }
+      if (response.status === 401) {
+        const directOk = await authenticateWithToken(entered, true);
+        if (directOk) return;
+      }
+      setLoginError(message);
+    } catch {
+      setLoginError('Unable to reach the CityLab server. Check that it is running and try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function logout() {
+    const tokenToRevoke = accessKey;
     resetPatientWorkspaceState();
     setAccessKey('');
     setSession(null);
     setDraftKey('');
+    setCreatedProfile(null);
+    setCopiedCode(false);
+    setLoginError('');
+    setRegisterError('');
     setPage('Dashboard');
     setBusy(false);
     setLoading(false);
+    if (tokenToRevoke) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenToRevoke}` },
+      }).catch(() => {});
+    }
   }
 
   useEffect(() => {
@@ -312,6 +494,7 @@ function App() {
     setActiveMeasurementIds([]);
     setAnalysisRevision('');
     setExpandedRowId(null);
+    setReviewOpen(false);
     setStatusFilter('All results');
     setSearchQuery('');
     setChatBusy(false);
@@ -321,9 +504,14 @@ function App() {
       .then((data: Detail) => {
         if (version === requestVersionRef.current) {
           setDetail(data);
+          syncReviewDraft(data);
           setAnalysisRevision(data.analysis_revision || '');
           setDraftAge(data.report.age_at_report ?? '');
           setDraftSex((data.report.sex_at_report as 'female' | 'male' | 'unknown') || 'unknown');
+          if (autoReviewReportIdRef.current === data.report.id) {
+            setReviewOpen(true);
+            autoReviewReportIdRef.current = '';
+          }
         }
       })
       .catch((err) => {
@@ -356,23 +544,98 @@ function App() {
       return;
     }
     setBusy(true);
+    setUploadStatus('Uploading report…');
     const version = requestVersionRef.current;
+    const stageTimer = window.setTimeout(() => {
+      if (version === requestVersionRef.current) {
+        setUploadStatus('Reading your report…');
+      }
+    }, 220);
     try {
       const form = new FormData();
       form.append('file', file);
       const uploaded = await (await apiFetch('/reports/upload', { method: 'POST', body: form })).json();
+      setUploadStatus('Reading your report…');
       const reportList = await (await apiFetch('/reports')).json();
       if (version !== requestVersionRef.current) return;
       setReports(reportList.reports || []);
-      setSelectedReportId(uploaded.report_id);
+      autoReviewReportIdRef.current = uploaded.report_id;
+      if (uploaded.report_id === selectedReportId) {
+        const refreshed: Detail = await (
+          await apiFetch(`/reports/${encodeURIComponent(uploaded.report_id)}`)
+        ).json();
+        if (version === requestVersionRef.current) {
+          setDetail(refreshed);
+          syncReviewDraft(refreshed);
+          setAnalysisRevision(refreshed.analysis_revision || '');
+          setReviewOpen(true);
+          autoReviewReportIdRef.current = '';
+        }
+      } else {
+        setSelectedReportId(uploaded.report_id);
+      }
       setPage('Report Analysis');
       setNotice(
-        session?.knowledge_provenance === 'synthetic'
-          ? 'Report imported. Under synthetic demonstration mode, uploaded real reports remain unclassified unless reviewed clinical rules are loaded.'
-          : uploaded.prompt_injection_detected
-          ? 'Report imported. Document instructions were neutralized and ignored.'
-          : 'Report imported with source line references.'
+        uploaded.prompt_injection_detected
+          ? 'Report extracted for review. Document instructions were neutralized and ignored.'
+          : 'Report extracted. Review the extracted results below and click Save and analyze.'
       );
+    } catch (err) {
+      if (version === requestVersionRef.current) {
+        setError((err as Error).message);
+      }
+    } finally {
+      window.clearTimeout(stageTimer);
+      if (version === requestVersionRef.current) {
+        setBusy(false);
+        setUploadStatus('');
+      }
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  }
+
+  async function handleReviewSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!detail || busy) return;
+    setError('');
+    setNotice('');
+    setBusy(true);
+    const version = requestVersionRef.current;
+    try {
+      const updated: Detail = await (
+        await apiFetch(`/reports/${encodeURIComponent(detail.report.id)}/review`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            measurements: reviewRows.map((row) => ({
+              id: row.id,
+              test: row.test.trim(),
+              value: row.value.trim(),
+              unit: row.unit.trim(),
+            })),
+            age_at_report: reviewAge.trim() === '' ? null : reviewAge.trim(),
+            sex_at_report: reviewSex,
+            confirm_name_mismatch: confirmMismatch,
+          }),
+        })
+      ).json();
+      const reportList = await (await apiFetch('/reports')).json();
+      if (version === requestVersionRef.current) {
+        setReports(reportList.reports || []);
+        setDetail(updated);
+        syncReviewDraft(updated);
+        setAnalysisRevision(updated.analysis_revision || '');
+        setDraftAge(updated.report.age_at_report ?? '');
+        setDraftSex((updated.report.sex_at_report as 'female' | 'male' | 'unknown') || 'unknown');
+        setChatHistory([]);
+        setActiveMeasurementIds([]);
+        setReviewOpen(false);
+        setNotice(
+          session?.patient.profile_type === 'personal' && session?.knowledge_provenance === 'synthetic'
+            ? 'Report saved. Automated classification remains paused because no clinical reference guideline set is loaded.'
+            : 'Report saved'
+        );
+      }
     } catch (err) {
       if (version === requestVersionRef.current) {
         setError((err as Error).message);
@@ -381,7 +644,25 @@ function App() {
       if (version === requestVersionRef.current) {
         setBusy(false);
       }
-      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  }
+
+  async function handleViewSource(reportId: string) {
+    setError('');
+    try {
+      const response = await apiFetch(`/reports/${encodeURIComponent(reportId)}/source`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `citylab-source-${reportId}`;
+        link.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setError((err as Error).message);
     }
   }
 
@@ -547,11 +828,13 @@ function App() {
   });
 
   const urgentWarnings = [...new Set(results.flatMap((r) => r.warnings))];
-  const isSyntheticContext = Boolean(
-    session?.synthetic_demo ||
-      session?.knowledge_provenance === 'synthetic' ||
-      detail?.report.synthetic ||
-      detail?.analysis.knowledge_provenance === 'synthetic'
+  const measurementById = new Map((detail?.report.measurements || []).map((m) => [m.id, m]));
+  const isPersonalProfile = session?.patient.profile_type === 'personal';
+  const showSyntheticDemoBanner = Boolean(session?.synthetic_demo || detail?.report.synthetic);
+  const showPersonalPausedBanner = Boolean(
+    isPersonalProfile &&
+      !detail?.report.synthetic &&
+      (session?.knowledge_provenance === 'synthetic' || detail?.analysis.knowledge_provenance === 'synthetic')
   );
 
   function navigateTo(target: PageName) {
@@ -559,11 +842,23 @@ function App() {
     setMobileMenuOpen(false);
   }
 
+  function handleLogoHome() {
+    if (session) {
+      navigateTo('Dashboard');
+    } else {
+      setCreatedProfile(null);
+      setCopiedCode(false);
+      setError('');
+      setRegisterError('');
+      setLoginError('');
+    }
+  }
+
   if (!session) {
     return (
       <div className="grid min-h-screen bg-slate-50 lg:grid-cols-2">
         <div className="flex flex-col justify-between border-b border-slate-200 bg-white px-6 py-8 lg:border-b-0 lg:border-r lg:px-14 lg:py-12">
-          <Brand />
+          <Brand onHome={handleLogoHome} />
           <div className="my-8 max-w-lg">
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">
               CityLab Diagnostics
@@ -582,7 +877,7 @@ function App() {
                   Single-Patient Isolation
                 </div>
                 <p className="mt-1.5 text-xs text-slate-600">
-                  Each report session strictly limits access to that patient&apos;s records, questions, and PDF export.
+                  Each profile strictly limits access to your own saved reports, questions, and PDF export.
                 </p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -602,9 +897,199 @@ function App() {
         </div>
 
         <main className="flex items-center justify-center px-4 py-10 sm:px-6">
-          <div className="w-full max-w-lg space-y-5">
+          <div className="w-full max-w-xl space-y-5">
+            {createdProfile ? (
+              <section className="rounded-xl border border-teal-200 bg-white p-6 sm:p-7">
+                <div className="flex items-center gap-2.5 text-teal-700">
+                  <span className="grid h-9 w-9 place-items-center rounded-lg border border-teal-200 bg-teal-50">
+                    <Check size={18} />
+                  </span>
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">Your profile is ready</h2>
+                    <p className="text-xs text-slate-600">Profile created for {createdProfile.profile.name}</p>
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Your private access code
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                    <code
+                      data-testid="generated-access-code"
+                      className="select-all break-all rounded border border-slate-200 bg-white px-3 py-2 font-mono text-sm font-semibold text-slate-900"
+                    >
+                      {createdProfile.access_code}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={handleCopyCode}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                    >
+                      {copiedCode ? (
+                        <>
+                          <Check size={14} className="text-emerald-700" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={14} />
+                          Copy code
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  role="alert"
+                  className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950"
+                >
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
+                  <p>
+                    Save this access code now in a safe place. For your privacy, it is only shown once and cannot be
+                    recovered if lost — if you lose it, you will need to create a new profile.
+                  </p>
+                </div>
+
+                {error && (
+                  <div role="alert" className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                    {error}
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleContinueAfterCreate}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800"
+                  >
+                    {busy ? (
+                      <LoaderCircle size={16} className="spin" />
+                    ) : (
+                      <>
+                        Continue to my workspace <ArrowRight size={16} />
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreatedProfile(null);
+                      setCopiedCode(false);
+                    }}
+                    className="text-xs font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Return to sign in
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                <div className="grid divide-y divide-slate-200 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                  <div className="p-6">
+                    <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                      <UserPlus size={17} className="text-teal-700" />
+                      <h2>Create your profile</h2>
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                      Save your lab reports in your own workspace. You’ll receive a private code to sign in again.
+                    </p>
+
+                    <form onSubmit={handleCreateProfile} className="mt-4 space-y-3">
+                      <div>
+                        <label htmlFor="profile-name" className="block text-xs font-semibold text-slate-700">
+                          Full name
+                        </label>
+                        <input
+                          id="profile-name"
+                          type="text"
+                          required
+                          maxLength={120}
+                          value={profileName}
+                          onChange={(e) => setProfileName(e.target.value)}
+                          placeholder="e.g. Nadia Rahman"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+                        />
+                      </div>
+                      {registerError && (
+                        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                          {registerError}
+                        </div>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={registerBusy || busy}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800"
+                      >
+                        {registerBusy ? (
+                          <>
+                            <LoaderCircle size={14} className="spin" />
+                            Creating your profile…
+                          </>
+                        ) : (
+                          <>
+                            Create profile
+                            <ArrowRight size={14} />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="p-6">
+                    <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                      <KeyRound size={17} className="text-slate-700" />
+                      <h2>Sign in with access code</h2>
+                    </div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                      Already created a profile? Enter your saved access code to return to your reports.
+                    </p>
+
+                    <form onSubmit={handleLoginSubmit} className="mt-4 space-y-3">
+                      <div>
+                        <label htmlFor="access-key" className="block text-xs font-semibold text-slate-700">
+                          Access code
+                        </label>
+                        <input
+                          id="access-key"
+                          type="password"
+                          autoComplete="off"
+                          required
+                          value={draftKey}
+                          onChange={(e) => setDraftKey(e.target.value)}
+                          placeholder="Paste your saved access code"
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+                        />
+                      </div>
+                      {loginError && (
+                        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                          {loginError}
+                        </div>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={busy || registerBusy}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                      >
+                        {busy ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <>
+                            Open my workspace
+                            <ArrowRight size={14} />
+                          </>
+                        )}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </section>
+            )}
+
             {demoState === 'loading' && (
-              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
                 <LoaderCircle size={18} className="spin text-teal-700" />
                 <span>Loading sample reports...</span>
               </div>
@@ -613,7 +1098,7 @@ function App() {
             {demoState === 'error' && (
               <div
                 role="alert"
-                className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-950"
+                className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -634,45 +1119,45 @@ function App() {
               </div>
             )}
 
-            {demoState === 'enabled' && personas.length > 0 && (
-              <section className="rounded-xl border border-slate-200 bg-white p-6 sm:p-7">
+            {demoState === 'enabled' && personas.length > 0 && !createdProfile && (
+              <section className="rounded-xl border border-slate-200 bg-white p-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-xl font-bold text-slate-900">Choose a sample report</h2>
+                  <h2 className="text-base font-bold text-slate-900">Try a sample report</h2>
                   <span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600">
                     Synthetic demo
                   </span>
                 </div>
-                <p className="mt-1.5 text-sm text-slate-600">
-                  Explore four fictional patient reports to see how CityLab explains results.
+                <p className="mt-1 text-xs text-slate-600">
+                  Explore four fictional sample patients to see how CityLab explains results.
                 </p>
 
                 {error && (
-                  <div role="alert" className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  <div role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
                     {error}
                   </div>
                 )}
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {personas.map((persona) => (
                     <button
                       key={persona.patient_id}
                       type="button"
                       disabled={busy}
                       onClick={() => authenticateWithToken(persona.token)}
-                      className="flex flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-4 text-left hover:border-teal-700 hover:bg-white"
+                      className="flex flex-col justify-between rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-left hover:border-teal-700 hover:bg-white"
                     >
                       <div>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-bold text-slate-900">{persona.name}</span>
+                          <span className="text-xs font-bold text-slate-900">{persona.name}</span>
                           <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                            Synthetic demo
+                            Sample
                           </span>
                         </div>
-                        <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{persona.description}</p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{persona.description}</p>
                       </div>
-                      <div className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700">
+                      <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-teal-700">
                         <span>View report</span>
-                        <ArrowRight size={14} />
+                        <ArrowRight size={13} />
                       </div>
                     </button>
                   ))}
@@ -680,80 +1165,11 @@ function App() {
               </section>
             )}
 
-            {demoState === 'disabled' ? (
-              <section className="rounded-xl border border-slate-200 bg-white p-6 sm:p-7">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-teal-200 bg-teal-50 text-teal-700">
-                  <LockKeyhole size={18} />
-                </div>
-                <h2 className="mt-4 text-xl font-bold text-slate-900">View your lab report</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Use the code provided by your lab administrator.
-                </p>
-
-                <form onSubmit={handleLoginSubmit} className="mt-5 space-y-4">
-                  <div>
-                    <label htmlFor="access-key" className="block text-xs font-semibold text-slate-700">
-                      Patient access code
-                    </label>
-                    <input
-                      id="access-key"
-                      type="password"
-                      autoComplete="off"
-                      required
-                      value={draftKey}
-                      onChange={(e) => setDraftKey(e.target.value)}
-                      placeholder="Enter your private access code"
-                      className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
-                    />
-                  </div>
-                  {error && (
-                    <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-                      {error}
-                    </div>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={busy}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-800"
-                  >
-                    {busy ? <LoaderCircle size={16} className="spin" /> : <>View your report <ArrowRight size={16} /></>}
-                  </button>
-                </form>
-              </section>
-            ) : (
-              <details className="rounded-xl border border-slate-200 bg-white px-5 py-4">
-                <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold text-slate-700">
-                  <span>Have a private access code?</span>
-                  <ChevronDown size={15} className="text-slate-400" />
-                </summary>
-                <form onSubmit={handleLoginSubmit} className="mt-4 space-y-3 border-t border-slate-100 pt-4">
-                  <div>
-                    <label htmlFor="access-key" className="block text-xs font-semibold text-slate-700">
-                      Patient access code
-                    </label>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Use the code provided by your lab administrator.
-                    </p>
-                    <input
-                      id="access-key"
-                      type="password"
-                      autoComplete="off"
-                      required
-                      value={draftKey}
-                      onChange={(e) => setDraftKey(e.target.value)}
-                      placeholder="Enter your private access code"
-                      className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={busy}
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
-                  >
-                    {busy ? <LoaderCircle size={14} className="spin" /> : <>View your report <ArrowRight size={14} /></>}
-                  </button>
-                </form>
-              </details>
+            {demoState === 'disabled' && !createdProfile && (
+              <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-5 py-4 text-xs text-slate-600">
+                <LockKeyhole size={15} className="shrink-0 text-slate-400" />
+                <span>Sample demonstration reports are turned off on this server. Create a profile or sign in above.</span>
+              </div>
             )}
           </div>
         </main>
@@ -817,6 +1233,7 @@ function App() {
           <tbody className="divide-y divide-slate-200 text-sm">
             {visibleResults.map((r) => {
               const isOpen = expandedRowId === r.measurement_id;
+              const rawMeasurement = measurementById.get(r.measurement_id);
               return (
                 <React.Fragment key={r.measurement_id}>
                   <tr
@@ -836,6 +1253,11 @@ function App() {
                               Matched: {r.canonical_test_name}
                             </span>
                           )}
+                        {rawMeasurement?.user_corrected && (
+                          <span className="ml-2 rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                            User corrected
+                          </span>
+                        )}
                       </button>
                       <div className="mt-0.5 text-[11px] text-slate-500">
                         {r.evidence[0]?.file} · {r.evidence[0]?.location}
@@ -889,7 +1311,7 @@ function App() {
                   {isOpen && (
                     <tr>
                       <td colSpan={5} className="p-0">
-                        <EvidenceDrawer result={r} />
+                        <EvidenceDrawer result={r} measurement={rawMeasurement} />
                       </td>
                     </tr>
                   )}
@@ -940,7 +1362,7 @@ function App() {
         }`}
       >
         <div className="px-2">
-          <Brand />
+          <Brand onHome={handleLogoHome} />
         </div>
 
         <div className="mt-7 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
@@ -969,7 +1391,7 @@ function App() {
         </nav>
 
         <div className="space-y-3 border-t border-slate-200 pt-4">
-          {personas.length > 0 && (
+          {personas.length > 0 && !isPersonalProfile && (
             <div>
               <label
                 htmlFor="sample-patient-switcher"
@@ -1045,7 +1467,7 @@ function App() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {isSyntheticContext && (
+            {showSyntheticDemoBanner && (
               <span className="inline-flex items-center rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-900">
                 Synthetic demo
               </span>
@@ -1060,7 +1482,7 @@ function App() {
         </header>
 
         <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 space-y-6 px-4 py-6 sm:px-8">
-          {isSyntheticContext && (
+          {showSyntheticDemoBanner && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-950">
               <span className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
                 Synthetic demo
@@ -1071,16 +1493,33 @@ function App() {
             </div>
           )}
 
+          {showPersonalPausedBanner && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-950">
+              <span className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+                Clinical classification paused
+              </span>
+              <span>
+                Your report measurements are saved and searchable, while automated Normal/Low/High status classification is paused because no reviewed clinical reference guidelines are currently loaded.
+              </span>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="min-w-0">
               <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-teal-700">
                 CityLab Diagnostics
               </div>
               <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
-                {page === 'Dashboard' ? 'Patient Laboratory Report' : page}
+                {page === 'Dashboard'
+                  ? isPersonalProfile
+                    ? `Welcome, ${session.patient.name}`
+                    : 'Patient Laboratory Report'
+                  : page}
               </h1>
               <p className="mt-1 text-sm text-slate-600">
-                {page === 'Report assistant'
+                {page === 'Dashboard' && isPersonalProfile
+                  ? 'Your reports, explained and saved in one place.'
+                  : page === 'Report assistant'
                   ? 'Ask about a test, understand a result, or prepare questions for your doctor.'
                   : 'Inspect measurements, unit conversions, reference intervals, and source notes.'}
               </p>
@@ -1091,18 +1530,43 @@ function App() {
                 ref={uploadInputRef}
                 type="file"
                 className="hidden"
-                accept=".txt,.md,.csv,.json,.pdf"
+                accept=".pdf,.png,.jpg,.jpeg,.txt,.md,.csv,.json"
                 aria-label="Upload a report"
                 onChange={(e) => handleUpload(e.target.files?.[0])}
               />
+              {detail?.report.has_source_file && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleViewSource(detail.report.id)}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <ExternalLink size={14} />
+                  View original report
+                </button>
+              )}
+              {detail && (detail.report.measurements?.length ?? 0) > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    if (!reviewOpen) syncReviewDraft(detail);
+                    setReviewOpen(!reviewOpen);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <Pencil size={14} />
+                  {reviewOpen ? 'Hide review' : 'Review extracted results'}
+                </button>
+              )}
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => uploadInputRef.current?.click()}
                 className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                <Upload size={15} />
-                Upload Report
+                {uploadStatus ? <LoaderCircle size={15} className="spin" /> : <Upload size={15} />}
+                {uploadStatus || 'Upload Report'}
               </button>
               <button
                 type="button"
@@ -1110,7 +1574,7 @@ function App() {
                 onClick={handleDownloadPdf}
                 className="inline-flex items-center gap-2 rounded-md bg-teal-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-teal-800"
               >
-                {busy ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}
+                {busy && !uploadStatus ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}
                 Download PDF
               </button>
             </div>
@@ -1155,7 +1619,13 @@ function App() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-bold text-slate-900">{session.patient.name}</div>
                 <div className="mt-0.5 text-xs text-slate-500">
-                  {detail?.report.synthetic ? 'Synthetic sample record' : 'Uploaded report record'}
+                  {detail?.report.synthetic
+                    ? 'Synthetic sample record'
+                    : detail?.report.review_status === 'needs_review'
+                    ? 'Needs review · Uploaded report'
+                    : isPersonalProfile
+                    ? 'Saved personal report'
+                    : 'Uploaded report record'}
                 </div>
               </div>
             </div>
@@ -1184,9 +1654,11 @@ function App() {
                 </div>
               </div>
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Report Date</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Original Report Date
+                </div>
                 <div className="mt-0.5 text-sm font-semibold text-slate-800">
-                  {formatDate(detail?.report.report_date ?? null)}
+                  {detail?.report.report_date ? formatDate(detail.report.report_date) : 'Not listed on document'}
                 </div>
               </div>
             </div>
@@ -1206,12 +1678,182 @@ function App() {
                 {!reports.length && <option>No reports available</option>}
                 {reports.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {formatDate(r.report_date)} · {r.source_file || r.id.slice(0, 14)} ({r.tests} tests)
+                    {r.title || r.source_file || r.id.slice(0, 14)} ·{' '}
+                    {r.report_date ? formatDate(r.report_date) : 'Date not listed'} ({r.tests} tests)
                   </option>
                 ))}
               </select>
             </div>
           </section>
+
+          {detail && (reviewOpen || detail.report.review_status === 'needs_review') && (
+            <section className="rounded-lg border border-teal-200 bg-white p-5">
+              <form onSubmit={handleReviewSave} className="space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-4">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-base font-bold text-slate-900">Review the extracted results</h2>
+                      {detail.report.review_status === 'needs_review' && (
+                        <span className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                          Needs review
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Confirm or correct the extracted test names, values, and units before saving and running analysis.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        syncReviewDraft(detail);
+                        setReviewOpen(false);
+                      }}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={busy || (Boolean(detail.report.name_mismatch_warning) && !confirmMismatch)}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-teal-700 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-teal-800"
+                    >
+                      {busy ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}
+                      Save and analyze
+                    </button>
+                  </div>
+                </div>
+
+                {detail.report.name_mismatch_warning && (
+                  <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950">
+                    <div className="font-semibold">Patient name mismatch notice</div>
+                    <p className="mt-1">{detail.report.name_mismatch_warning}</p>
+                    <label className="mt-2.5 flex items-center gap-2 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={confirmMismatch}
+                        onChange={(e) => setConfirmMismatch(e.target.checked)}
+                        className="h-4 w-4 rounded border-amber-400 text-teal-700"
+                      />
+                      <span>
+                        I confirm this report belongs to {session.patient.name} and should be saved in my workspace.
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 sm:grid-cols-4">
+                  <div>
+                    <label htmlFor="review-age-input" className="block text-[10px] font-semibold uppercase text-slate-500">
+                      Age (years)
+                    </label>
+                    <input
+                      id="review-age-input"
+                      type="number"
+                      min={0}
+                      max={150}
+                      step="1"
+                      placeholder="Not listed"
+                      value={reviewAge}
+                      onChange={(e) => setReviewAge(e.target.value)}
+                      className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="review-sex-select" className="block text-[10px] font-semibold uppercase text-slate-500">
+                      Biological Sex
+                    </label>
+                    <select
+                      id="review-sex-select"
+                      value={reviewSex}
+                      onChange={(e) => setReviewSex(e.target.value as 'female' | 'male' | 'unknown')}
+                      className="mt-1 w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900"
+                    >
+                      <option value="unknown">unknown</option>
+                      <option value="female">female</option>
+                      <option value="male">male</option>
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="text-[10px] font-semibold uppercase text-slate-500">Original Report Metadata</div>
+                    <div className="mt-1 text-xs text-slate-700">
+                      Date: {detail.report.report_date ? formatDate(detail.report.report_date) : 'Not listed on document'}
+                      {detail.report.printed_patient_name ? ` · Printed name: ${detail.report.printed_patient_name}` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-md border border-slate-200">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        <th className="px-3 py-2.5">Test</th>
+                        <th className="px-3 py-2.5">Value</th>
+                        <th className="px-3 py-2.5">Unit</th>
+                        <th className="px-3 py-2.5">Source Excerpt</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {reviewRows.map((row, idx) => (
+                        <tr key={row.id} className={row.uncertain ? 'bg-amber-50/50' : 'bg-white'}>
+                          <td className="px-3 py-2 align-top">
+                            <input
+                              type="text"
+                              aria-label={`Test name row ${idx + 1}`}
+                              value={row.test}
+                              onChange={(e) => {
+                                const next = [...reviewRows];
+                                next[idx] = { ...next[idx], test: e.target.value };
+                                setReviewRows(next);
+                              }}
+                              className="w-full min-w-[140px] rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900"
+                            />
+                            {row.uncertain && (
+                              <span className="mt-1 inline-block rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900">
+                                Uncertain
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            <input
+                              type="text"
+                              aria-label={`Value row ${idx + 1}`}
+                              value={row.value}
+                              onChange={(e) => {
+                                const next = [...reviewRows];
+                                next[idx] = { ...next[idx], value: e.target.value };
+                                setReviewRows(next);
+                              }}
+                              className="numeric w-28 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900"
+                            />
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            <input
+                              type="text"
+                              aria-label={`Unit row ${idx + 1}`}
+                              value={row.unit}
+                              onChange={(e) => {
+                                const next = [...reviewRows];
+                                next[idx] = { ...next[idx], unit: e.target.value };
+                                setReviewRows(next);
+                              }}
+                              className="w-28 rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900"
+                            />
+                          </td>
+                          <td className="px-3 py-2 align-top font-mono text-[11px] text-slate-600">
+                            <div className="max-w-xs break-words">{row.excerpt || '—'}</div>
+                            {row.issue && <div className="mt-1 text-[10px] text-amber-800">{row.issue}</div>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </form>
+            </section>
+          )}
 
           {detail &&
             (detail.report.age_at_report === null ||
@@ -1301,17 +1943,34 @@ function App() {
             <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-white px-6 py-16 text-center">
               <FileText size={32} className="text-slate-400" />
               <h2 className="mt-3 text-base font-semibold text-slate-900">
-                {reports.length ? 'Select a report above' : 'No laboratory reports on file'}
+                {reports.length ? 'Select a report above' : 'No saved reports yet'}
               </h2>
-              <p className="mt-1 max-w-md text-xs text-slate-500">
-                Upload a laboratory report in TXT, Markdown, CSV, JSON, or text PDF format containing a Test, Value, Unit table.
+              <p className="mt-1.5 max-w-md text-xs leading-relaxed text-slate-600">
+                Upload a laboratory report in PDF, PNG/JPG image, TXT, Markdown, CSV, or JSON format to extract your
+                results, review them, ask questions, and download a formatted PDF summary.
               </p>
+              {session.ocr_available === false && (
+                <p className="mt-2 max-w-md text-[11px] text-slate-500">
+                  Digital text PDFs, CSV, TXT, Markdown, and JSON files work directly on this computer; scanned images require local Tesseract OCR.
+                </p>
+              )}
+              {!reports.length && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => uploadInputRef.current?.click()}
+                  className="mt-5 inline-flex items-center gap-2 rounded-md bg-teal-700 px-4 py-2 text-xs font-semibold text-white hover:bg-teal-800"
+                >
+                  <Upload size={14} />
+                  Upload your first report
+                </button>
+              )}
             </div>
           ) : page === 'Patient Reports' ? (
             <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">Authorized Reports</h2>
+                  <h2 className="text-base font-semibold text-slate-900">Saved Reports</h2>
                   <p className="mt-0.5 text-xs text-slate-500">
                     Showing only records belonging to {session.patient.name}.
                   </p>
@@ -1319,43 +1978,79 @@ function App() {
               </div>
               <div className="divide-y divide-slate-200">
                 {reports.map((r) => (
-                  <button
+                  <div
                     key={r.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedReportId(r.id);
-                      navigateTo('Report Analysis');
-                    }}
-                    className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left hover:bg-slate-50"
+                    className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 hover:bg-slate-50"
                   >
-                    <div className="flex min-w-0 items-center gap-3.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedReportId(r.id);
+                        navigateTo('Report Analysis');
+                      }}
+                      className="flex min-w-0 flex-1 items-center gap-3.5 text-left"
+                    >
                       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-teal-200 bg-teal-50 text-teal-700">
                         <FileText size={17} />
                       </span>
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900">
-                          {formatDate(r.report_date)} — {r.source_file || r.id}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-semibold text-slate-900">
+                            {r.title || r.source_file || r.id}
+                          </span>
+                          <span
+                            className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
+                              r.review_status === 'needs_review'
+                                ? 'border-amber-300 bg-amber-50 text-amber-900'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                            }`}
+                          >
+                            {r.review_status === 'needs_review' ? 'Needs review' : 'Ready'}
+                          </span>
                         </div>
                         <div className="mt-0.5 text-xs text-slate-500">
+                          Original report date:{' '}
+                          {r.report_date ? formatDate(r.report_date) : 'Not listed on document'}
+                          {r.uploaded_at ? ` · Uploaded ${formatDate(r.uploaded_at)}` : ''}
+                          {' · '}
                           {r.tests} measurements
-                          {r.synthetic ? ' · Synthetic demo' : ' · Uploaded report'}
+                          {r.synthetic ? ' · Synthetic demo' : ''}
                         </div>
                       </div>
+                    </button>
+                    <div className="flex items-center gap-2">
+                      {r.has_source_file && (
+                        <button
+                          type="button"
+                          onClick={() => handleViewSource(r.id)}
+                          className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                        >
+                          <ExternalLink size={13} />
+                          View original report
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Open ${r.title || r.source_file || r.id}`}
+                        onClick={() => {
+                          setSelectedReportId(r.id);
+                          navigateTo('Report Analysis');
+                        }}
+                        className="rounded border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-100"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
                     </div>
-                    <ChevronRight size={17} className="shrink-0 text-slate-400" />
-                  </button>
+                  </div>
                 ))}
               </div>
               <div className="border-t border-slate-200 bg-slate-50 p-6">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700">
-                  Supported Upload Format
+                  Supported Upload Formats
                 </h3>
                 <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
-                  Include <code className="rounded bg-slate-200 px-1 py-0.5">Patient ID: {session.patient.id}</code>,
-                  optional <code className="rounded bg-slate-200 px-1 py-0.5">Report Date: YYYY-MM-DD</code>,{' '}
-                  <code className="rounded bg-slate-200 px-1 py-0.5">Age:</code>, and{' '}
-                  <code className="rounded bg-slate-200 px-1 py-0.5">Sex:</code>, followed by a table with{' '}
-                  <code className="rounded bg-slate-200 px-1 py-0.5">Test | Value | Unit</code>.
+                  Upload a laboratory report as a PDF, PNG/JPG image, TXT, Markdown, CSV, or JSON file. After uploading,
+                  you can review and edit any extracted test names, values, and units before saving it to your workspace.
                 </p>
               </div>
             </section>
@@ -1626,7 +2321,7 @@ function App() {
                     <div className="space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-bold text-red-950">Urgent Clinical Attention Required</span>
-                        {isSyntheticContext && (
+                        {showSyntheticDemoBanner && (
                           <span className="rounded border border-red-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-red-800">
                             Synthetic demo rule
                           </span>

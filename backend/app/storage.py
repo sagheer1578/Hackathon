@@ -7,6 +7,7 @@ high-concurrency production healthcare systems.
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -125,9 +126,67 @@ class Repository:
     def __init__(self, directory: str | Path):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
+        self.uploads_dir = self.directory / 'uploads'
         self.lock = FileLock(str(self.directory / '.storage.lock'), timeout=10)
         self.snapshot_file = self.directory / CANONICAL_FILENAME
         self.files = {name: self.directory / name for name in JSON_FILENAMES}
+
+    def save_upload_file(self, patient_id: str, report_id: str, suffix: str, content: bytes) -> str:
+        """Persist an uploaded source file under a server-generated path scoped to the owning profile."""
+        if not re.fullmatch(r'^[A-Za-z0-9_-]{1,80}$', patient_id):
+            raise ValueError('Invalid patient identifier for upload storage.')
+        if not re.fullmatch(r'^[A-Za-z0-9_-]{1,80}$', report_id):
+            raise ValueError('Invalid report identifier for upload storage.')
+        clean_suffix = suffix.lower()
+        if not re.fullmatch(r'^\.[a-z0-9]{1,10}$', clean_suffix):
+            raise ValueError('Invalid file extension for upload storage.')
+
+        uploads_root = self.uploads_dir.resolve()
+        target_dir = (uploads_root / patient_id).resolve()
+        if target_dir != uploads_root and uploads_root not in target_dir.parents:
+            raise ValueError('Upload storage path escapes configured root.')
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        target_file = (target_dir / f'{report_id}{clean_suffix}').resolve()
+        if target_file.parent != target_dir:
+            raise ValueError('Upload filename escapes target patient folder.')
+
+        temp = None
+        try:
+            fd, temp = tempfile.mkstemp(prefix=f'{report_id}-', suffix='.tmp', dir=target_dir)
+            with os.fdopen(fd, 'wb') as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, target_file)
+            temp = None
+        finally:
+            if temp and os.path.exists(temp):
+                os.unlink(temp)
+
+        return f'{patient_id}/{report_id}{clean_suffix}'
+
+    def read_upload_file(self, stored_filename: str, patient_id: str) -> Path:
+        """Resolve an uploaded source path while strictly enforcing profile ownership."""
+        if not re.fullmatch(r'^[A-Za-z0-9_-]{1,80}$', patient_id):
+            raise FileNotFoundError('Invalid patient identifier.')
+        uploads_root = self.uploads_dir.resolve()
+        patient_dir = (uploads_root / patient_id).resolve()
+        resolved = (uploads_root / stored_filename).resolve()
+        if resolved.parent != patient_dir or not resolved.is_file():
+            raise FileNotFoundError('Stored source file not found.')
+        return resolved
+
+    def remove_upload_file(self, stored_filename: str | None) -> None:
+        if not stored_filename:
+            return
+        uploads_root = self.uploads_dir.resolve()
+        resolved = (uploads_root / stored_filename).resolve()
+        if uploads_root in resolved.parents and resolved.is_file():
+            try:
+                resolved.unlink()
+            except OSError:
+                pass
 
     def initialized(self) -> bool:
         return self.snapshot_file.exists() or all(path.exists() for path in self.files.values())
