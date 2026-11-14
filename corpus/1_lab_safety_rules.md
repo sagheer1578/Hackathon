@@ -2,7 +2,7 @@
 
 Document ID: CLD-SOP-001
 Effective Date: 2026-01-15
-Authority: CityLab Diagnostics Clinical Governance Board
+Provenance: Synthetic Demonstration Fixture (Not Clinical Policy)
 
 ## Section 1: Patient Privacy & Authorization
 - **SR-001 (Strict Patient Isolation):** Every laboratory report, analysis result, conversation turn, and generated PDF document is strictly scoped to the single authorized patient associated with the active access session. Cross-patient lookups, comparisons, summaries, or file exports are strictly prohibited.

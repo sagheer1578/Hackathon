@@ -31,12 +31,18 @@ class Measurement(Model):
     issue: str | None = None
 
 
+KnowledgeProvenance = Literal['synthetic', 'organizer_unreviewed', 'organizer_reviewed']
+
+
 class Report(Model):
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
     patient_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
     report_date: date | None = None
     age_at_report: Decimal | None = Field(default=None, ge=0, le=150)
     sex_at_report: Literal['female', 'male', 'unknown'] = 'unknown'
+    original_age_at_report: Decimal | None = Field(default=None, ge=0, le=150)
+    original_sex_at_report: Literal['female', 'male', 'unknown'] = 'unknown'
+    demographics_overridden: bool = False
     measurements: list[Measurement] = Field(min_length=1, max_length=500)
     issues: list[str] = Field(default_factory=list)
     source_file: str = ''
@@ -163,6 +169,7 @@ class Analysis(Model):
     report_id: str
     patient_id: str
     knowledge_version: str
+    knowledge_provenance: KnowledgeProvenance = 'organizer_reviewed'
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     results: list[Result]
     counts: dict[str, int]
@@ -178,6 +185,7 @@ class Database(Model):
     schema_version: Literal[1] = 1
     knowledge_version: str = 'empty-no-corpus'
     reviewed: bool = False
+    knowledge_provenance: KnowledgeProvenance = 'organizer_reviewed'
     patients: dict[str, Patient] = Field(default_factory=dict)
     reports: dict[str, Report] = Field(default_factory=dict)
     report_metadata: dict[str, ReportMetadata] = Field(default_factory=dict)

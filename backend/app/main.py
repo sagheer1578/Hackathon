@@ -18,42 +18,42 @@ from fastapi.staticfiles import StaticFiles
 from filelock import Timeout
 from pydantic import Field
 from starlette.requests import Request
-from .ai import LLMAdapter, answer, enhance_analysis_with_ai
+from .ai import LLMAdapter, answer, compute_analysis_revision, enhance_analysis_with_ai
 from .corpus_parser import ingest_corpus_directory
 from .engine import analyze
 from .ingestion import ExtractionError, MAX_BYTES, extract_report
 from .models import Analysis, Database, Model, Report
 from .pdf import generate_pdf
-from .storage import JSON_FILENAMES, Repository, StorageError
+from .storage import CANONICAL_FILENAME, Repository, StorageError
 
 
 DEMO_PERSONAS = [
     {
         'patient_id': 'patient-p001',
         'name': 'Arjun Mehta',
-        'tag': 'Boundaries & Unit Conversions',
-        'description': 'SGPT at 45 U/L exact limit, FBS in mmol/L, Total Cholesterol at 200 mg/dL, elevated TSH.',
+        'tag': 'Synthetic demo',
+        'description': 'Reference limits and unit conversions',
         'token': 'citylab-demo-p001-arjun-mehta-access-key-01',
     },
     {
         'patient_id': 'patient-p002',
         'name': 'Fatima Khan',
-        'tag': 'Urgent Critical Values',
-        'description': 'Critical FBS (22.5 mmol/L -> 405 mg/dL) and Potassium (6.3 mmol/L) plus Low Hemoglobin.',
+        'tag': 'Synthetic demo',
+        'description': 'Urgent findings',
         'token': 'citylab-demo-p002-fatima-khan-access-key-02',
     },
     {
         'patient_id': 'patient-p003',
         'name': 'Jordan Patel',
-        'tag': 'Missing Demographics',
-        'description': 'Age omitted and sex unknown; refuses range guessing while flagging urgent Potassium.',
+        'tag': 'Synthetic demo',
+        'description': 'Missing patient information',
         'token': 'citylab-demo-p003-jordan-patel-access-key-03',
     },
     {
         'patient_id': 'patient-p004',
         'name': 'Viktor Chen',
-        'tag': 'Noisy Report & Edge Cases',
-        'description': '200+ boilerplate lines, prompt-injection neutralized, Serum Ferritin, missing unit, duplicates.',
+        'tag': 'Synthetic demo',
+        'description': 'Incomplete and unusual report data',
         'token': 'citylab-demo-p004-viktor-chen-access-key-04',
     },
 ]
@@ -90,6 +90,8 @@ class BodyLimit:
 
 class ChatRequest(Model):
     question: str = Field(min_length=1, max_length=1200)
+    active_measurement_ids: list[str] = Field(default_factory=list, max_length=10)
+    context_revision: str | None = Field(default=None, max_length=80)
 
 
 class AnalyzeRequest(Model):
@@ -111,10 +113,17 @@ def create_app(
     app = FastAPI(
         title='CityLab Diagnostics',
         version='1.0.0',
-        description='Evidence-first medical laboratory report explainer backed by a 9-file JSON store and deterministic rules engine.',
+        description='Evidence-first medical laboratory report explainer backed by an atomic JSON snapshot and deterministic rules engine.',
     )
     app.add_middleware(BodyLimit)
-    cors_origins = [o.strip() for o in os.getenv('CORS_ORIGINS', 'http://127.0.0.1:5173,http://localhost:5173').split(',') if o.strip()]
+    cors_origins = [
+        o.strip()
+        for o in os.getenv(
+            'CORS_ORIGINS',
+            'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8001,http://localhost:8001',
+        ).split(',')
+        if o.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -232,7 +241,10 @@ def create_app(
             'status': 'ok',
             'knowledge_ready': db.reviewed and bool(db.test_aliases),
             'knowledge_version': db.knowledge_version,
-            'storage_files': len(JSON_FILENAMES),
+            'knowledge_provenance': db.knowledge_provenance,
+            'synthetic_demo': demo_mode and db.knowledge_provenance == 'synthetic',
+            'storage_mode': 'canonical-atomic-snapshot',
+            'snapshot_file': CANONICAL_FILENAME,
             'patients_count': len(db.patients),
             'reports_count': len(db.reports),
             'ai_configured': adapter.is_configured(),
@@ -259,6 +271,8 @@ def create_app(
             'patient': patient,
             'knowledge_ready': db.reviewed and bool(db.test_aliases),
             'knowledge_version': db.knowledge_version,
+            'knowledge_provenance': db.knowledge_provenance,
+            'synthetic_demo': demo_mode and db.knowledge_provenance == 'synthetic',
             'tests_count': len(db.test_aliases),
             'ranges_count': len(db.reference_ranges),
             'urgent_rules_count': len(db.urgent_thresholds),
@@ -295,7 +309,12 @@ def create_app(
         if patient_id not in repo.read().patients:
             raise HTTPException(403, 'Patient is not provisioned.')
         content = file.file.read(MAX_BYTES + 1)
-        report, metadata, _ = extract_report(content, file.filename or 'upload.txt', authorized_patient=patient_id)
+        report, metadata, _ = extract_report(
+            content,
+            file.filename or 'upload.txt',
+            authorized_patient=patient_id,
+            synthetic=False,
+        )
 
         def save(db: Database) -> None:
             existing = db.reports.get(report.id)
@@ -337,6 +356,7 @@ def create_app(
             'patient': db.patients[patient_id],
             'metadata': db.report_metadata.get(report_id),
             'analysis': analysis,
+            'analysis_revision': compute_analysis_revision(report, analysis),
         }
 
     @app.get('/api/reports/{report_id}/results')
@@ -348,7 +368,18 @@ def create_app(
     async def chat(report_id: str, payload: ChatRequest, patient_id: str = Depends(authorized)):
         db, report = get_report(report_id, patient_id)
         analysis = current_analysis(db, report)
-        return await answer(payload.question, analysis, adapter, db=db, report=report)
+        try:
+            return await answer(
+                payload.question,
+                analysis,
+                adapter,
+                db=db,
+                report=report,
+                active_measurement_ids=payload.active_measurement_ids,
+                context_revision=payload.context_revision,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
 
     @app.get('/api/reports/{report_id}/download')
     def download(report_id: str, patient_id: str = Depends(authorized)):
@@ -376,15 +407,26 @@ def create_app(
                 raise HTTPException(404, 'Report not found.')
             rep.age_at_report = payload.age_at_report
             rep.sex_at_report = payload.sex_at_report
+            rep.demographics_overridden = (
+                payload.age_at_report != rep.original_age_at_report
+                or payload.sex_at_report != rep.original_sex_at_report
+            )
             filtered_issues = [
-                i for i in rep.issues if not i.startswith('Demographics updated via session:') and not i.startswith('Demographics reset via session:')
+                i
+                for i in rep.issues
+                if not i.startswith('Demographics updated via session:')
+                and not i.startswith('Demographics reset via session:')
+                and not i.startswith('User-supplied demographics:')
             ]
+            orig_age_txt = str(rep.original_age_at_report) if rep.original_age_at_report is not None else 'missing'
             if payload.age_at_report is None and payload.sex_at_report == 'unknown':
-                filtered_issues.append('Demographics reset via session: age omitted and sex set to unknown.')
+                filtered_issues.append(
+                    f'Demographics reset via session (restored to age omitted, sex unknown; original source: age={orig_age_txt}, sex={rep.original_sex_at_report}).'
+                )
             else:
                 age_txt = str(payload.age_at_report) if payload.age_at_report is not None else 'missing'
                 filtered_issues.append(
-                    f'Demographics updated via session: age={age_txt}, sex={payload.sex_at_report}.'
+                    f'User-supplied demographics: age={age_txt}, sex={payload.sex_at_report} (original source: age={orig_age_txt}, sex={rep.original_sex_at_report}).'
                 )
             rep.issues = filtered_issues
             new_analysis = analyze(rep, current)
@@ -394,11 +436,14 @@ def create_app(
             updated_holder['analysis'] = new_analysis
 
         updated_db = repo.update(mutate)
+        rep_out: Report = updated_holder['report']  # type: ignore[assignment]
+        ana_out: Analysis = updated_holder['analysis']  # type: ignore[assignment]
         return {
-            'report': updated_holder['report'],
+            'report': rep_out,
             'patient': updated_db.patients[patient_id],
             'metadata': updated_db.report_metadata.get(report_id),
-            'analysis': updated_holder['analysis'],
+            'analysis': ana_out,
+            'analysis_revision': compute_analysis_revision(rep_out, ana_out),
         }
 
     frontend_dist = Path(__file__).resolve().parent.parent.parent / 'frontend' / 'dist'

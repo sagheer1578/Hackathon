@@ -5,17 +5,17 @@
 
 ## 1. Executive Summary
 
-We built a complete, verified, minimal-enterprise **Medical Lab Report Explainer** for CityLab Diagnostics strictly inside `c:\Users\saqlain\Desktop\hack`. The system separates **deterministic medical classification** (Python `Decimal` rules engine) from **natural-language explanation** (grounded LLM adapter with deterministic fallback), ensuring that no language model can ever invent ranges, compute unit conversions, diagnose diseases, or override critical clinical thresholds.
+We built and hardened a minimal-enterprise **Medical Lab Report Explainer** workspace inside `C:\Users\saqlain\Desktop\hack`. The system separates **deterministic medical classification** (Python `Decimal` rules engine) from **natural-language explanation** (deterministic intent router + optional schema-validated LLM phrasing), ensuring that no language model can compute, alter, or invent numeric results, reference ranges, statuses, diagnoses, or treatment advice.
 
-All state and normalized medical rules are stored in a **9-file atomic JSON database** (`data/`) with `filelock` concurrency control and Pydantic v2 cross-collection validation. On the latest verification run after our final edits, all **78 automated pytest tests passed (0 failed)**, **92 literal evidence citations** were verified against the original corpus files, the TypeScript/Vite frontend compiled cleanly (`0` errors, `0` gradients), and live server measurements confirmed end-to-end health, chat, and PDF export functionality.
+All state and normalized medical rules are stored in a **canonical atomic JSON snapshot (`data/database.json`)** with `filelock` concurrency control, duplicate-key rejection, fail-closed corruption handling, and non-destructive migration from the legacy 9-file layout. After the final code edits, **89 automated pytest tests passed (0 failed, 1 Starlette deprecation warning)**, **92 literal evidence citations** matched `corpus/` files verbatim, the TypeScript/Vite frontend compiled cleanly (`0` errors, zero CSS `gradient`/`backdrop-filter`/`box-shadow`), and live HTTP checks against `http://127.0.0.1:8001` verified health, served UI bundle content, all 4 sample persona assistant/demographics workflows, PDF downloads, and 5-endpoint cross-patient `404` isolation.
 
 ---
 
-## 2. Actual Corpus Files Inspected & Utilized
+## 2. Corpus Provenance & Fixtures Used
 
-Because `c:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied files inside it, we authored and ingested a self-consistent 9-file CityLab Diagnostics corpus in [`corpus/`](corpus/) covering every clinical and edge-case requirement in Problem Statement B:
+Because `C:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied files inside it, [`corpus/`](corpus/) holds a **self-authored synthetic demonstration corpus** (`knowledge_provenance: "synthetic"`). Matching excerpts against these files verifies **software fidelity to the loaded fixtures** — it does **not** represent clinical validation or external medical authority. Furthermore, `engine.py` refuses to classify uploaded non-synthetic patient reports (`synthetic=False`) against `synthetic` rules (`Cannot Be Classified`), and marks both UI views and PDFs with synthetic demonstration disclosures.
 
-| File | Purpose | Key Contents |
+| File | Purpose | Key Contents (Synthetic Fixtures) |
 |---|---|---|
 | `corpus/1_lab_safety_rules.md` | Clinical & privacy governance (`CLD-SOP-001`) | 12 numbered safety rules (`SR-001`–`SR-012`) covering strict patient isolation, non-diagnosis, no guessing demographics, untrusted document handling, and urgent escalation |
 | `corpus/2_medical_glossary.md` | Canonical tests, aliases, glossary, conversions (`CLD-GLS-002`) | 17 canonical tests (`alt`, `ast`, `fbs`, `hba1c`, `total_cholesterol`, `hdl`, `ldl`, `triglycerides`, `creatinine`, `bun`, `tsh`, `hemoglobin`, `wbc`, `platelets`, `potassium`, `sodium`, `urine_protein`), documented aliases (`SGPT`, `SGOT`, `Hb`, `K+`, etc.), Class-8 plain-language text, and 8 test-specific unit conversions |
@@ -32,20 +32,21 @@ Because `c:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied
 ## 3. Completed Features vs. Incomplete / Environment-Limited Items
 
 ### Completed & Verified
-- Structured markdown/CSV/TXT/JSON/text-PDF report ingestion with boilerplate noise stripping, injection detection, and exact line/page coordinates.
-- Corpus parser (`backend/app/corpus_parser.py`) with literal excerpt verification (`verify_corpus_evidence`).
-- 9-file atomic JSON repository (`backend/app/storage.py`) with `filelock` and fail-closed corruption guards.
-- Deterministic `Decimal` medical rules engine (`backend/app/engine.py`).
-- Provider-independent `LLMAdapter` supporting Groq and free-tier OpenRouter (`:free` enforced), plus safety validation and deterministic fallback (`backend/app/ai.py`).
-- FastAPI backend (`backend/app/main.py`) with Bearer token patient isolation, rate limiting (120 req/min/host), upload validation, interactive session demographic updates (`/demographics`), and SPA serving.
-- Server-side ReportLab multi-page PDF generator (`backend/app/pdf.py`) containing all 17 required clinical sections.
+- Structured markdown/CSV/TXT/JSON/text-PDF report ingestion with boilerplate noise stripping, injection detection, duplicate JSON key rejection, and exact line/page coordinates.
+- Corpus parser (`backend/app/corpus_parser.py`) with synthetic provenance tracking (`knowledge_provenance: "synthetic"`) and literal excerpt verification (`verify_corpus_evidence`).
+- Canonical atomic JSON snapshot repository (`backend/app/storage.py` writing `data/database.json`) with `FileLock`, duplicate-key rejection, fail-closed corruption guards, and one-time non-destructive migration preserving the legacy 9 `*.json` files.
+- Deterministic `Decimal` medical rules engine (`backend/app/engine.py`) with synthetic-vs-real report isolation.
+- Deterministic intent router, phrase-matched test resolution, validated report-scoped follow-up state (`active_measurement_ids` + `context_revision`), strict `StructuredAIResponse` (`extra='forbid'`), hardened numeric/status/diagnosis/treatment `validate_ai_text`, and provider-independent `LLMAdapter` (`backend/app/ai.py`).
+- FastAPI backend (`backend/app/main.py`) with Bearer token patient isolation, rate limiting (120 req/min/host), demo allowlist (`DEMO_MODE`), upload `synthetic=False` enforcement, interactive session demographic updates/resets with original source preservation (`/demographics`), and SPA serving via `run_server.py` on `http://127.0.0.1:8001`.
+- Server-side ReportLab PDF generator (`backend/app/pdf.py`) including `"SYNTHETIC DEMONSTRATION"` banner/notice when synthetic and explicit `Original Source Age`/`Sex` vs `(user-supplied)` demographic distinction.
 - Enterprise minimal zero-gradient React + TypeScript + Tailwind frontend (`frontend/src/main.tsx`), compiled into `frontend/dist/`.
-- 78 automated pytest assertions passing (`0` failures).
-- Full Dockerfiles, Nginx config, `.dockerignore`, `.env.example`, and `docker-compose.yml`.
+- **89 passed, 0 failed** automated `pytest` assertions + live HTTP acceptance checks across all 4 sample personas, PDFs, demographic updates, and cross-patient `404` isolation on `http://127.0.0.1:8001`.
+- Dockerfiles, Nginx config, `.dockerignore`, `.env.example`, and `docker-compose.yml`.
 
 ### Incomplete / Not Executed Due to Host Environment
-- **Live Docker Compose Runtime Execution:** Docker Desktop / `docker` CLI is not installed on the evaluation Windows host, so `docker compose up --build` could not be executed locally; container definitions were authored and checked against local runtime configuration instead.
-- **External Cloud Hosting & Live Remote LLM Calls:** No external hosting (Vercel/Render/Railway) or external Groq/OpenRouter API keys were configured in the local sandbox; AI grounding, safety rejection, and fallback paths were tested deterministically and via schema validation unit tests (`LLM_PROVIDER=disabled` by default).
+- **Live Docker Compose Runtime Execution:** Docker Desktop / `docker` CLI is not installed on this Windows host, so `docker compose up --build` was not executed locally.
+- **Live External LLM API Calls:** No `LLM_API_KEY` is configured in the environment (`LLM_PROVIDER=disabled`, `ai_configured=false`); live external Groq or OpenRouter model responses are therefore **not verified**. AI validation, rejection of fabricated numbers/prescriptions, schema validation, and timeout/`429`/malformed-JSON fallbacks were tested with mocked payloads in `pytest`.
+- **Live Chrome DevTools DOM Rendering Walkthrough:** The Chrome DevTools remote debugging socket (`DevToolsActivePort`) was not active on this Windows host during verification, so interactive mouse-click DOM layout, computed style checks in Chrome, and `375px` mobile viewport rendering were not directly inspected in a live Chrome window. Responsive styling (`styles.css` with `:focus-visible` and mobile media queries), built TypeScript/Vite compilation, zero gradients/shadows, and served HTML/JS/CSS asset contents were verified instead alongside live HTTP acceptance calls.
 
 ---
 
@@ -54,24 +55,23 @@ Because `c:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied
 ```text
 +----------------------------------------------------------------------+
 |                React + TypeScript + Tailwind UI (Flat)               |
-|  Login / Demo Switcher | Dashboard | Reports | Chat | PDF Download   |
+|  Sample Cards | Collapsed Private Code | Report | Assistant | PDF    |
 +----------------------------------+-----------------------------------+
                                    | HTTP / Bearer Token (/api/*)
 +----------------------------------v-----------------------------------+
-|                        FastAPI Application                           |
+|               FastAPI Application (http://127.0.0.1:8001)            |
 |  BodyLimit (8 MiB) | Security Headers | Rate Limiter | Auth Guard    |
 +-------+-------------------------+--------------------------+---------+
         |                         |                          |
 +-------v--------+      +---------v---------+      +---------v---------+
-| Corpus &       |      | Deterministic     |      | Grounded AI /     |
-| Report Parser  |      | Rules Engine      |      | Safety Validator  |
+| Corpus &       |      | Deterministic     |      | Assistant Router  |
+| Report Parser  |      | Rules Engine      |      | & AI Validator    |
 | (ingestion.py) |      | (engine.py)       |      | (ai.py)           |
 +-------+--------+      +---------+---------+      +---------+---------+
         |                         |                          |
 +-------v-------------------------v--------------------------v---------+
-|              9-File Atomic JSON Repository (storage.py)              |
-|  patients | reports | report_metadata | test_aliases | safety_rules  |
-|  reference_ranges | urgent_thresholds | medical_glossary | analyses  |
+|     Canonical Atomic JSON Snapshot: data/database.json (storage.py)  |
+|       (One-time non-destructive migration from legacy 9 *.json)      |
 +----------------------------------------------------------------------+
                                    |
                         +----------v----------+
@@ -82,11 +82,12 @@ Because `c:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied
 
 ---
 
-## 5. AI Model and Retrieval Strategy
+## 5. AI Model, Assistant Routing & Safety Strategy
 
-- **Bounded Evidence Retrieval (No Blind Whole-Corpus Vector Search):** In `backend/app/ai.py`, incoming user questions are first screened by `SAFETY_INPUT_RE` for diagnosis requests, dosage/treatment queries, cross-patient access attempts, and prompt-injection patterns. Next, `_match_relevant_results()` tokenizes the question and matches against canonical test names, original test strings, and documented aliases in `test_aliases.json`.
-- **Provider-Independent Adapter (`LLMAdapter`):** Supports `groq` (`https://api.groq.com/openai/v1/chat/completions`) and `openrouter` (`https://openrouter.ai/api/v1/chat/completions`, strictly requiring `:free` model suffixes), with `8.0s` timeouts, 1 retry on HTTP `429`/`>=500`, and `response_format: {"type": "json_object"}`.
-- **Safety Output Validator (`validate_ai_text` & `GroundedAnswer`):** Rejects outputs containing diagnosis claims, treatment prescriptions, fabricated `evidence_ids`, or other patient IDs, and guarantees urgent warnings are preserved verbatim. Whenever `LLM_PROVIDER=disabled` or an external API fails, the system serves the deterministic plain-language explanation compiled from `medical_glossary.json` and `engine.py`.
+- **Deterministic Intent Routing (`_route_intent`):** Incoming questions are first screened for cross-patient / prompt-injection patterns (`CROSS_PATIENT_RE`, `INJECTION_OR_BYPASS_RE`) and diagnosis or treatment requests (`DIAGNOSIS_RE`, `TREATMENT_RE`). Greetings, category queries (`list_normal`, `list_high`, `list_low`, `list_abnormal`, `list_urgent`, `list_unclassified`), `doctor_questions`, and `report_summary` are routed without colliding with specific test matches.
+- **Contiguous Word-Boundary Phrase Matching (`match_tests_in_question`):** Replaces noisy word-overlap scoring (which previously confused words like `"high"`/`"it"` with `"HDL"`). Only full contiguous alias/name phrases excluding generic words match tests cleanly, while longest-span matching prevents sub-phrase collisions.
+- **Validated Follow-Up Context (`active_measurement_ids` + `context_revision`):** Multi-turn follow-ups (`"Is it high?"`, `"What is its reference range?"`) keep focus on the active test only when client-supplied `active_measurement_ids` all belong to the authorized report (otherwise `422`) and `context_revision` matches `compute_analysis_revision(report, analysis)` (stale demographic context clears prior topic and returns `intent='clarification'`).
+- **Strict Structured AI Output + Text Validator (`StructuredAIResponse` & `validate_ai_text`):** When an external `groq` or `:free` `openrouter` provider is configured, `LLMAdapter.select_structured` enforces `StructuredAIResponse` (`extra='forbid'`), allowing the model only to select valid report `measurement_ids` and whitelisted `explanation_keys` while the backend renders every number, unit conversion, readable reference range, classification, and source disclosure. `validate_ai_text` rejects invented values, numbers copied onto the wrong test, fabricated reference intervals, wrong statuses, omitted urgent warnings, diagnoses, and treatment prescriptions. Whenever `LLM_PROVIDER=disabled` or an upstream API fails, the system stays safely in deterministic mode and discloses in the UI that AI assistance is unavailable.
 
 ---
 
@@ -94,28 +95,19 @@ Because `c:\Users\saqlain\Desktop\hack` started empty with no organizer-supplied
 
 Implemented in [`backend/app/engine.py`](backend/app/engine.py):
 1. **Exact Decimal Arithmetic:** Parses measurement values, conversion multipliers/offsets, age boundaries, and reference limits via `decimal.Decimal`, eliminating binary floating-point rounding drift.
-2. **Documented Alias Resolution:** Builds a casefolded whitespace-normalized index from `test_aliases.json`. Unknown tests return `Cannot Be Classified` (`"not covered in the CityLab reference sheets"`). Ambiguous multi-match aliases also return `Cannot Be Classified`.
-3. **Test-Specific Unit Conversion:** Converts units only when a single `(test_id, from_unit, to_unit)` entry exists in `test_aliases.json` (e.g., `FBS: mmol/L -> mg/dL * 18`; `Creatinine: umol/L -> mg/dL * 0.0113`), logging the exact formula into `result.audit`.
+2. **Documented Alias Resolution:** Builds a casefolded whitespace-normalized index from the `test_aliases` collection in `database.json`. Unknown tests return `Cannot Be Classified` (`"not covered in the CityLab reference sheets"`). Ambiguous multi-match aliases also return `Cannot Be Classified`.
+3. **Test-Specific Unit Conversion:** Converts units only when a single `(test_id, from_unit, to_unit)` entry exists in `test_aliases` (e.g., `FBS: mmol/L -> mg/dL * 18`; `Creatinine: umol/L -> mg/dL * 0.0113`), logging the exact formula into `result.audit`.
 4. **Demographic Matching Without Guessing:** `demographic_match()` returns `False` when any known attribute disqualifies a rule, `None` when a required demographic (`age` or `sex`) is missing/unknown, and `True` only when satisfied.
-5. **Independent Urgent Thresholds:** `urgent_thresholds.json` rules evaluate independently of reference range availability. Even if a patient lacks demographics (`patient-p003`) or has duplicate entries, triggered urgent rules force `status = "Urgent"` and surface the critical warning.
-6. **Boundary Convention:** Supports both inclusive (`[`, `]`) and exclusive (`(`, `)`) bounds for both reference values and age intervals.
+5. **Independent Urgent Thresholds:** `urgent_thresholds` rules evaluate independently of reference range availability. Even if a patient lacks demographics (`patient-p003`) or has duplicate entries, triggered urgent rules force `status = "Urgent"` and surface the critical warning.
+6. **Boundary & Synthetic Isolation Rules:** Supports both inclusive (`[`, `]`) and exclusive (`(`, `)`) bounds for values and ages, and refuses to classify uploaded non-synthetic reports (`synthetic=False`) against `knowledge_provenance='synthetic'` rules.
 
 ---
 
 ## 7. JSON Database Structure and Persistence
 
-Implemented in [`backend/app/storage.py`](backend/app/storage.py) using 9 separate JSON files under `DATA_DIR`:
-1. `patients.json`
-2. `reports.json`
-3. `reference_ranges.json`
-4. `test_aliases.json`
-5. `urgent_thresholds.json`
-6. `medical_glossary.json`
-7. `safety_rules.json`
-8. `analysis_results.json`
-9. `report_metadata.json`
+Implemented in [`backend/app/storage.py`](backend/app/storage.py) using a single canonical atomic snapshot at `DATA_DIR/database.json` (while preserving non-destructive one-time migration from legacy 9-file installations: `patients.json`, `reports.json`, `reference_ranges.json`, `test_aliases.json`, `urgent_thresholds.json`, `medical_glossary.json`, `safety_rules.json`, `analysis_results.json`, `report_metadata.json`).
 
-Every mutation acquires `FileLock('.storage.lock', timeout=10)`, reads current state, validates cross-collection foreign keys across the unified `Database` Pydantic model, computes deterministic `knowledge_version` SHA-256 hashes, and atomically writes modified files via `tempfile.mkstemp` + `os.fsync` + `os.replace`. Corrupted or schema-mismatched JSON fails closed (`StorageError`) without overwriting disk files.
+Every mutation acquires `FileLock('.storage.lock', timeout=10)`, reads `database.json` with a duplicate-key JSON rejection hook (`_reject_duplicate_keys`), validates cross-collection foreign keys across the unified `Database` Pydantic model, computes deterministic `knowledge_version` SHA-256 hashes, and writes a single temporary file in `DATA_DIR` via `tempfile.mkstemp` + `os.fsync` + `os.replace`. Nine separate files are **not** written in a multi-file transaction; `database.json` is the single authoritative snapshot. Corrupted, empty, duplicate-key, or schema-mismatched JSON fails closed (`StorageError`) without falling back silently or overwriting disk files.
 
 ---
 
@@ -123,8 +115,8 @@ Every mutation acquires `FileLock('.storage.lock', timeout=10)`, reads current s
 
 Implemented in [`frontend/src/main.tsx`](frontend/src/main.tsx) and [`frontend/src/styles.css`](frontend/src/styles.css):
 - **Minimalist Flat Enterprise Aesthetic:** Neutral `#f8fafc` workspace, `#ffffff` cards, `#0f172a` slate-navy typography, restrained `#0f766e` teal primary accent, and `1px` `#e2e8f0` borders.
-- **Strict Zero-Gradient Compliance:** Verified across all `.ts`, `.tsx`, `.css`, and `.py` source files that zero `gradient`, `backdrop-filter`, or glowing `box-shadow` directives exist.
-- **Unified Single-Workspace Flow:** Sidebar navigation (`Dashboard`, `Patient Reports`, `Report Analysis`, `AI Assistant`, `Report Downloads`), click-to-filter metric cards, expandable per-test Evidence & Audit drawers, inline interactive demographic entry for missing-demographic reports, and one-click PDF downloads.
+- **Strict Zero-Gradient Compliance:** Verified across all `frontend/src` and `backend/app` files (`0` matches for `gradient`, `backdrop-filter`, `box-shadow`), and verified in the compiled served CSS that `0` `linear-gradient`, `radial-gradient`, or `conic-gradient` functions exist.
+- **First-Time Entry & Assistant UX:** Landing screen shows **Choose a sample report** (4 one-click `"Synthetic demo"` cards with `"View report"`) above a collapsed **Have a private access code?** disclosure without exposing raw demo token strings or `"32+ character"` jargon. Inside the workspace, **Switch sample patient** cancels in-flight requests (`AbortController`) and clears prior chat/selection state; the **Report assistant** surfaces `"View sources"` and `"Report information"` disclosures cleanly without internal machinery names, clearly states when AI assistance is unavailable, and places noisy ingestion telemetry inside a secondary collapsible **Document processing notes** section.
 
 ---
 
@@ -136,18 +128,17 @@ Implemented in [`frontend/src/main.tsx`](frontend/src/main.tsx) and [`frontend/s
 
 ---
 
-## 10. Automated Testing Results
+## 10. Automated Testing & Live HTTP Verification Results
 
-Executed after final implementation edits via `.\.venv\Scripts\pytest.exe -v` and `npm.cmd run build`:
+Executed after final code edits via `.\.venv\Scripts\pytest.exe -v`, `npm.cmd run build`, CLI evidence verification, and live `http://127.0.0.1:8001` HTTP acceptance checks:
 
-| Suite / Check | Command | Result | Details |
+| Suite / Check | Command / Target | Result | Verified Scope |
 |---|---|---|---|
-| Rules Engine (`tests/test_engine.py`) | `pytest -v` | **41 passed, 0 failed** | Exact boundaries (`45 U/L`, `200 mg/dL`, `400 mg/dL`), aliases, conversions, inclusive/exclusive bounds, demographics, duplicates, urgent overrides, all 4 real CityLab corpus patients |
-| Ingestion & 9-File JSON Storage (`tests/test_ingestion_storage.py`) | `pytest -v` | **16 passed, 0 failed** | 15,000-line noisy doc + injection neutralization, PDF ingestion, synonym headers (`Test Name`/`Units`/`Gender: F`), 9-file atomic persistence, 8-thread concurrent writes, corruption fail-closed, corpus integrity + fabricated excerpt rejection |
-| API, Auth, AI Safety & PDF (`tests/test_api_ai_pdf.py`) | `pytest -v` | **21 passed, 0 failed** | Workflow & restart persistence, cross-patient 404 denial, invalid credentials (`401`), upload idempotency, multi-page PDF (>3 pages), chat safety refusals, AI validator, demographic update endpoint, rate limit (`429`), SPA serving |
-| **Total Automated Pytest Suite** | `.\.venv\Scripts\pytest.exe -v` | **78 passed, 0 failed** | Executed in `5.32s` |
-| Corpus Evidence Verification | `cli.py verify-evidence corpus` | **92 citations verified** | Every rule, range, alias, conversion, glossary, and urgent excerpt matched verbatim in `corpus/` |
-| Frontend Build | `npm.cmd run build` | **Passed (0 errors)** | `tsc -b && vite build` completed in `4.07s` (`dist/assets/index-BetjfdU6.js`, `279.40 kB`) |
+| **Full Automated Pytest Suite** | `.\.venv\Scripts\pytest.exe -v` | **89 passed, 0 failed** (1 Starlette `httpx` warning, `10.99s`) | Rules engine (`tests/test_engine.py`), canonical atomic snapshot & legacy migration & ingestion (`tests/test_ingestion_storage.py`), API/Auth/Assistant/AI-validation/PDF (`tests/test_api_ai_pdf.py`) |
+| Corpus Ingestion & Evidence Verification | `cli.py --data-dir data ingest-corpus corpus` & `verify-evidence corpus` | **92 citations verified** | `vdf3e2fb7d0820a62`: 17 tests, 26 ranges, 12 urgent rules, 4 patients, 8 reports; created `data/database.json` while keeping `corpus/` & legacy `data/*.json` unchanged |
+| Frontend Build | `cd frontend; npm.cmd run build` | **Passed (0 errors, `7.66s`)** | `tsc -b && vite build` emitted `dist/index.html` (`0.44 kB`), `dist/assets/index-dw2jjv0z.css` (`20.49 kB`), `dist/assets/index-imkg2hPj.js` (`286.53 kB`) |
+| Live Server Health & Assets | `GET http://127.0.0.1:8001/api/health`, `/`, `/assets/index-*.js`, `/assets/index-*.css` | **HTTP 200 OK** | Confirmed `knowledge_provenance: "synthetic"`, `snapshot_file: "database.json"`, `ai_configured: false`, `:focus-visible`, zero CSS gradients, and updated UI labels |
+| Live 4-Persona API & PDF Acceptance | Live `http://127.0.0.1:8001` Python HTTP checks | **Passed** | Arjun multi-turn `ALT -> Is it high? -> reference range -> normal -> high -> urgent -> doctor questions`; Fatima urgent + `11,300`-byte PDF; Jordan `34/female` override + `10,188`-byte PDF (`Original Source Age` & `user-supplied`) + reset; Viktor noise/injection telemetry; 5x cross-patient `404` checks |
 
 ---
 
@@ -166,13 +157,13 @@ Covered in both automated regression tests and live corpus patients:
 
 ---
 
-## 12. Measured Performance
+## 12. Observed Artifact Sizes & Execution Timings
 
-Observed directly on the local Windows Python 3.13 / FastAPI runtime after final edits:
-- **Full 9-File Corpus Ingestion + 4-Report Analysis:** `126.30 ms`
-- **Live Uvicorn PDF Generation & Download (`patient-p001`, 8 tests):** `136.10 ms` (`13,048` bytes, valid `%PDF-` header)
-- **Pytest Full Regression Suite (78 test cases):** `5.32 s`
-- **Frontend Production Bundle (`tsc -b && vite build`):** `4.07 s`
+Measured directly on the local Windows Python 3.13 / Vite runtime after final edits:
+- **Full Pytest Suite (89 test cases):** `10.99 s` (`89 passed, 0 failed`)
+- **Frontend Production Build (`tsc -b && vite build`):** `7.66 s` (`286,511` bytes served JS, `20,489` bytes served CSS)
+- **Canonical Snapshot Size (`data/database.json`):** `212,733` bytes
+- **Live Server PDF Downloads (`http://127.0.0.1:8001`):** Fatima Khan report `11,300` bytes; Jordan Patel demographic-override report `10,188` bytes (valid `%PDF-` headers)
 
 ---
 
@@ -180,8 +171,9 @@ Observed directly on the local Windows Python 3.13 / FastAPI runtime after final
 
 1. **Text-Only PDF Support:** OCR is deliberately disabled; image-scanned PDFs require manual transcription or CSV/Markdown export.
 2. **Prototype JSON Storage Concurrency:** Appropriate for single-node demos and small datasets; high-throughput clinical environments require an RDBMS.
-3. **Docker Runtime Unverified Locally:** `docker` is absent on the Windows evaluation machine; Docker files are complete and ready for container-enabled hosts.
-4. **LLM Provider Disabled by Default:** Runs in zero-dependency deterministic explanation mode until `LLM_PROVIDER`, `LLM_API_KEY`, and `LLM_MODEL` are supplied in `.env`.
+3. **Docker Runtime Unverified Locally:** `docker` is absent on the Windows evaluation machine; Docker files are provided for container-enabled hosts.
+4. **LLM Provider Disabled & Live Calls Unverified:** Runs in deterministic mode (`LLM_PROVIDER=disabled`, `ai_configured=false`); no live Groq/OpenRouter API key was configured during verification.
+5. **Live Chrome DevTools Inspection Not Run:** Chrome remote debugging (`DevToolsActivePort`) was unavailable on the host, leaving visual browser layout checks unexecuted in Chrome.
 
 ---
 
@@ -191,28 +183,27 @@ Observed directly on the local Windows Python 3.13 / FastAPI runtime after final
 cp .env.example .env
 docker compose up --build
 ```
-- UI served on `http://localhost:3000` (Nginx proxying `/api/` to `backend:8000`)
-- Backend API exposed on `http://localhost:8000`
-- Persistent JSON files stored in Docker named volume `citylab_json_data` mounted at `/app/data`
+- UI served on `http://localhost:3000` (Nginx proxying `/api/` to `backend:8000` inside Compose)
+- Backend API exposed on `http://localhost:8000` inside Compose
+- Persistent JSON snapshot stored in Docker named volume `citylab_json_data` mounted at `/app/data`
 
 ---
 
-## 15. Live Deployment Status
+## 15. Local Runtime Status
 
-- **Local Production-Bundled Server:** Verified via Uvicorn serving both the compiled React SPA (`/`) and FastAPI API (`/api/*`) cleanly.
-- **External Cloud URL:** Not deployed externally during this offline/local workspace session; ready for immediate deployment via Docker Compose or Railway/Render/Vercel+Backend using the included Dockerfiles.
+- **Live Local Server:** Running via `.\.venv\Scripts\python.exe run_server.py` at `http://127.0.0.1:8001`, serving both the compiled React SPA (`/`) and FastAPI API (`/api/*`) cleanly without interfering with port `8000`.
+- **External Cloud URL:** Not deployed externally; runs cleanly locally at `http://127.0.0.1:8001`.
 
 ---
 
-## 16. Demo Walkthrough for Judges
+## 16. Demo Walkthrough for Evaluators
 
-1. Start the server (`.\.venv\Scripts\uvicorn.exe backend.app.main:app --host 127.0.0.1 --port 8000`) and open `http://127.0.0.1:8000`.
-2. **Boundary & Conversion Showcase (`patient-p001` — Arjun Mehta):** Click Arjun Mehta's card on the login screen. Show `SGPT` resolved to `ALT` at exact boundary `45 U/L` (`Normal`), `Total Cholesterol` at `200 mg/dL` (`Normal`), and `FBS 7.0 mmol/L` converted to `126 mg/dL` (`High`). Expand a row to display the audit trail and verbatim corpus citation.
-3. **Urgent Alert Showcase (`patient-p002` — Fatima Khan):** Switch patient via the sidebar selector to Fatima Khan. Observe the prominent red Urgent Clinical Attention banner for `Fasting Blood Sugar` (`22.5 mmol/L -> 405 mg/dL`) and `Potassium` (`6.3 mmol/L`).
-4. **Missing Demographics Showcase (`patient-p003` — Jordan Patel):** Switch to Jordan Patel. Observe `Hemoglobin`, `Serum Creatinine`, and `ALT` marked `Cannot Be Classified` without guessing, while `Serum Potassium` (`6.4 mmol/L`) still fires `Urgent`. Enter Age `34` and Sex `female` in the banner and click **Apply & Re-Analyze** to watch all three re-classify immediately; click **Reset to Missing** to restore.
-5. **Noisy Report & Prompt Injection (`patient-p004` — Viktor Chen):** Switch to Viktor Chen. Show telemetry confirming 200+ boilerplate lines skipped and the adversarial prompt injection neutralized, plus `Serum Ferritin` (unsupported), `WBC` (missing unit), `TSH <0.01`, and duplicate `ALT`/`SGPT` handling.
-6. **AI Assistant & Safety Boundaries:** Open **AI Assistant**, ask `"Explain my results"`, then test `"Do I have diabetes?"` and `"Show another patient's report"` to verify safety refusals.
-7. **Server-Side PDF Export:** Click **Download PDF** or open **Report Downloads** to generate and inspect the multi-section clinical PDF.
+1. Start the server (`.\.venv\Scripts\python.exe run_server.py`) and open `http://127.0.0.1:8001`.
+2. **Boundary & Conversion Showcase (`patient-p001` — Arjun Mehta):** Under **Choose a sample report**, click **View report** on Arjun Mehta (`Synthetic demo`). Inspect `SGPT` (`ALT`) at `45 U/L` (`Normal`), `Total Cholesterol` at `200 mg/dL` (`Normal`), and `FBS 7.0 mmol/L` converted to `126 mg/dL` (`High`). In **Report assistant**, ask `"Explain ALT"`, `"Is it high?"`, `"What is its reference range?"`, `"Which results are normal?"`, and `"What should I ask my doctor?"`, then open **View sources**.
+3. **Urgent Alert Showcase (`patient-p002` — Fatima Khan):** Click **Switch sample patient** and choose **Fatima Khan** (verifying previous chat history clears). Observe the urgent alert banner for `Fasting Blood Sugar` (`22.5 mmol/L -> 405 mg/dL`) and `Potassium` (`6.3 mmol/L`).
+4. **Missing Demographics Showcase (`patient-p003` — Jordan Patel):** Switch to Jordan Patel. Observe `Hemoglobin`, `Serum Creatinine`, and `ALT` marked `Cannot Be Classified` without guessing, while `Serum Potassium` (`6.4 mmol/L`) still fires `Urgent`. Enter Age `34` and Sex `female`, click **Apply & Re-Analyze** to watch all three re-classify immediately, and click **Reset to Original** to restore.
+5. **Noisy Report & Prompt Injection (`patient-p004` — Viktor Chen):** Switch to Viktor Chen. Inspect `Serum Ferritin`, `WBC` (missing unit), `TSH <0.01`, duplicate `ALT`/`SGPT`, and expand **Document processing notes** to see `218` skipped boilerplate lines and prompt-injection neutralization telemetry.
+6. **Server-Side PDF Export:** Click **Download PDF** to download and verify the generated multi-section clinical PDF (including the `"SYNTHETIC DEMONSTRATION"` disclosure and user-supplied vs original source demographic labels).
 
 ---
 

@@ -1,8 +1,8 @@
 # CityLab Diagnostics — Extended Hospital Referral & Noisy Archive Document
 
 Facility: CityLab Diagnostics Central Reference Lab
-Billing Code: CLD-REF-99284-ARCHIVE
-Archive Batch: 2026-11-10-NIGHTLY
+Provenance: Synthetic Demonstration Sample Report
+Archive Batch: 2026-11-10-SYNTHETIC-DEMO
 
 Patient ID: patient-p004
 Patient Name: Viktor Chen

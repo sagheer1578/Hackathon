@@ -1,7 +1,7 @@
 # CityLab Diagnostics — Priority Patient Laboratory Report
 
 Facility: CityLab Diagnostics Urgent Care Desk
-Report Status: Verified Final Report — Critical Alert Logged
+Report Status: Synthetic Demonstration Sample Report — Critical Alert Fixture
 
 Patient ID: patient-p002
 Patient Name: Fatima Khan

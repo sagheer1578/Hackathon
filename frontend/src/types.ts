@@ -1,5 +1,7 @@
 export type Status = 'Normal' | 'Low' | 'High' | 'Urgent' | 'Cannot Be Classified';
 
+export type KnowledgeProvenance = 'synthetic' | 'organizer_unreviewed' | 'organizer_reviewed';
+
 export interface Evidence {
   file: string;
   location: string;
@@ -25,6 +27,8 @@ export interface Session {
   patient: Patient;
   knowledge_ready: boolean;
   knowledge_version: string;
+  knowledge_provenance: KnowledgeProvenance;
+  synthetic_demo: boolean;
   tests_count: number;
   ranges_count: number;
   urgent_rules_count: number;
@@ -77,12 +81,16 @@ export interface Result {
 export interface Detail {
   patient: Patient;
   metadata: ReportMetadata | null;
+  analysis_revision?: string;
   report: {
     id: string;
     patient_id: string;
     report_date: string | null;
     age_at_report: string | null;
     sex_at_report: string;
+    original_age_at_report: string | null;
+    original_sex_at_report: string;
+    demographics_overridden: boolean;
     issues: string[];
     source_file: string;
     synthetic: boolean;
@@ -91,6 +99,7 @@ export interface Detail {
     report_id: string;
     patient_id: string;
     knowledge_version: string;
+    knowledge_provenance: KnowledgeProvenance;
     generated_at: string;
     results: Result[];
     counts: Record<Status, number>;
@@ -98,4 +107,20 @@ export interface Detail {
     ai_enhanced: boolean;
     disclaimer: string;
   };
+}
+
+export interface ChatSource {
+  measurement_id: string;
+  test: string;
+  file: string;
+  location: string;
+  excerpt: string;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  ai_used?: boolean;
+  sources?: ChatSource[];
+  report_urgent_notice?: string | null;
 }

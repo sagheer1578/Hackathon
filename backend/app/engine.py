@@ -165,8 +165,14 @@ def analyze(report: Report, db: Database) -> Analysis:
             fail('Measurement unit is missing.')
             continue
 
-        if not db.reviewed or not db.test_aliases:
+        if not db.reviewed or db.knowledge_provenance == 'organizer_unreviewed' or not db.test_aliases:
             fail('No reviewed medical corpus is installed. No clinical classification was attempted.')
+            continue
+        if db.knowledge_provenance == 'synthetic' and not report.synthetic:
+            fail(
+                'Synthetic demonstration reference rules cannot be applied to a non-synthetic patient report. '
+                'Reviewed clinical reference rules are required.'
+            )
             continue
 
         matched_tests = alias_index.get(normalize(m.test), [])
@@ -338,6 +344,7 @@ def analyze(report: Report, db: Database) -> Analysis:
         report_id=report.id,
         patient_id=report.patient_id,
         knowledge_version=db.knowledge_version,
+        knowledge_provenance=db.knowledge_provenance,
         results=results,
         counts=counts,
         doctor_questions=questions,

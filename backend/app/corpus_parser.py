@@ -8,6 +8,7 @@ from .models import (
     Database,
     Evidence,
     GlossaryEntry,
+    KnowledgeProvenance,
     Patient,
     ReferenceRange,
     SafetyRule,
@@ -260,8 +261,21 @@ def verify_corpus_evidence(db: Database, corpus_dir: Path) -> int:
     return len(evidences)
 
 
-def ingest_corpus_directory(corpus_dir: Path, repo: Repository, analyze_fn=None) -> Database:
-    """Ingest all CityLab corpus files into the 9 JSON collections without altering source files."""
+def _detect_corpus_provenance(files: list[Path]) -> KnowledgeProvenance:
+    for p in files:
+        head = '\n'.join(p.read_text(encoding='utf-8-sig').splitlines()[:10]).casefold()
+        if 'provenance: synthetic' in head or 'synthetic demonstration' in head:
+            return 'synthetic'
+    return 'organizer_reviewed'
+
+
+def ingest_corpus_directory(
+    corpus_dir: Path,
+    repo: Repository,
+    analyze_fn=None,
+    provenance: KnowledgeProvenance | None = None,
+) -> Database:
+    """Ingest corpus markdown files into canonical JSON storage without altering source files."""
     if not corpus_dir.is_dir():
         raise CorpusParseError(f'Corpus directory does not exist: {corpus_dir}')
 
@@ -274,6 +288,11 @@ def ingest_corpus_directory(corpus_dir: Path, repo: Repository, analyze_fn=None)
 
     if not safety_files or not glossary_files or not urgent_files or not range_files:
         raise CorpusParseError('Corpus directory is missing mandatory CityLab rule/reference documents.')
+
+    resolved_provenance: KnowledgeProvenance = provenance or _detect_corpus_provenance(
+        [*safety_files, *glossary_files, *urgent_files, *range_files]
+    )
+    reviewed_flag = resolved_provenance != 'organizer_unreviewed'
 
     safety_rules: dict[str, SafetyRule] = {}
     for p in safety_files:
@@ -300,7 +319,12 @@ def ingest_corpus_directory(corpus_dir: Path, repo: Repository, analyze_fn=None)
     reports = {}
     report_metadata = {}
     for p in report_files:
-        report, meta, patient = extract_report(p.read_bytes(), p.name, authorized_patient=None)
+        report, meta, patient = extract_report(
+            p.read_bytes(),
+            p.name,
+            authorized_patient=None,
+            synthetic=(True if resolved_provenance == 'synthetic' else None),
+        )
         if patient is None:
             patient = Patient(
                 id=report.patient_id,
@@ -313,7 +337,8 @@ def ingest_corpus_directory(corpus_dir: Path, repo: Repository, analyze_fn=None)
         report_metadata[report.id] = meta
 
     candidate_knowledge = Database(
-        reviewed=True,
+        reviewed=reviewed_flag,
+        knowledge_provenance=resolved_provenance,
         safety_rules=safety_rules,
         test_aliases=test_aliases,
         medical_glossary=medical_glossary,
@@ -323,7 +348,8 @@ def ingest_corpus_directory(corpus_dir: Path, repo: Repository, analyze_fn=None)
     verify_corpus_evidence(candidate_knowledge, corpus_dir)
 
     def apply_corpus(db: Database) -> None:
-        db.reviewed = True
+        db.reviewed = reviewed_flag
+        db.knowledge_provenance = resolved_provenance
         db.safety_rules = safety_rules
         db.test_aliases = test_aliases
         db.medical_glossary = medical_glossary

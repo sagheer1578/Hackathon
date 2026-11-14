@@ -1,7 +1,7 @@
 # CityLab Diagnostics — Reference Ranges: Hematology, Endocrine, Renal & Electrolytes
 
 Document ID: CLD-RNG-005
-Authority: CityLab Diagnostics Core Laboratory Division
+Provenance: Synthetic Demonstration Fixture (Not Clinical Reference)
 
 ## Boundary Convention
 - Square brackets `[low, high]` indicate **inclusive** limits (`low <= value <= high`).

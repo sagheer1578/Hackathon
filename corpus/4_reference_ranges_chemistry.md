@@ -1,7 +1,7 @@
 # CityLab Diagnostics — Reference Ranges: Chemistry, Lipid & Liver Panels
 
 Document ID: CLD-RNG-004
-Authority: CityLab Diagnostics Clinical Chemistry Division
+Provenance: Synthetic Demonstration Fixture (Not Clinical Reference)
 
 ## Boundary Convention
 - Square brackets `[low, high]` indicate **inclusive** limits (`low <= value <= high`).

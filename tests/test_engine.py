@@ -139,6 +139,9 @@ def test_real_citylab_corpus_patients(tmp_path):
     assert len(db.patients) == 4
     assert len(db.reports) == 4
     assert len(db.test_aliases) == 17
+    assert db.knowledge_provenance == 'synthetic'
+    assert all(rep.synthetic for rep in db.reports.values())
+    assert all(ana.knowledge_provenance == 'synthetic' for ana in db.analysis_results.values())
 
     by_patient = {a.patient_id: a for a in db.analysis_results.values()}
 
@@ -172,3 +175,17 @@ def test_real_citylab_corpus_patients(tmp_path):
     assert p4['SGPT'].status == 'Cannot Be Classified'
     assert p4['Serum Creatinine'].status == 'Normal'
     assert p4['Total Cholesterol'].status == 'High'
+
+
+def test_synthetic_rules_not_applied_to_real_report_and_unreviewed_corpus(db_fixture, make_report):
+    synthetic_db = db_fixture.model_copy(update={'knowledge_provenance': 'synthetic'})
+    real_report = make_report(synthetic=False)
+    real_result = analyze(real_report, synthetic_db).results[0]
+    assert real_result.status == 'Cannot Be Classified'
+    assert 'Synthetic demonstration reference rules cannot be applied' in real_result.reason
+
+    synth_report = make_report(synthetic=True)
+    assert analyze(synth_report, synthetic_db).results[0].status == 'Normal'
+
+    unreviewed_db = db_fixture.model_copy(update={'knowledge_provenance': 'organizer_unreviewed'})
+    assert 'No reviewed' in analyze(real_report, unreviewed_db).results[0].reason

@@ -2,10 +2,12 @@
 import csv
 import hashlib
 import io
+import json
 import re
 from pathlib import Path
 from pypdf import PdfReader
 from .models import Evidence, Measurement, Patient, Report, ReportMetadata
+from .storage import _reject_duplicate_keys
 
 MAX_BYTES = 8 * 1024 * 1024
 SUPPORTED = {'.txt', '.md', '.csv', '.json', '.pdf'}
@@ -40,6 +42,8 @@ METADATA_KEY_MAP = {
     'age': 'age',
     'sex': 'sex',
     'gender': 'sex',
+    'provenance': 'provenance',
+    'report status': 'report status',
 }
 
 
@@ -121,6 +125,7 @@ def extract_report(
     content: bytes,
     filename: str,
     authorized_patient: str | None = None,
+    synthetic: bool | None = False,
 ) -> tuple[Report, ReportMetadata, Patient | None]:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED or not content or len(content) > MAX_BYTES:
@@ -131,7 +136,8 @@ def extract_report(
 
     if suffix == '.json':
         try:
-            report = Report.model_validate_json(content)
+            raw_obj = json.loads(content.decode('utf-8-sig'), object_pairs_hook=_reject_duplicate_keys)
+            report = Report.model_validate(raw_obj)
         except Exception as exc:
             raise ExtractionError('JSON does not match the documented report schema.') from exc
         target_patient = authorized_patient or report.patient_id
@@ -146,7 +152,10 @@ def extract_report(
         report.id = 'r-' + hashlib.sha256((target_patient + digest).encode()).hexdigest()[:24]
         report.source_file = clean_name
         report.source_hash = digest
-        report.synthetic = False
+        report.synthetic = bool(synthetic) if synthetic is not None else False
+        report.original_age_at_report = report.age_at_report
+        report.original_sex_at_report = report.sex_at_report
+        report.demographics_overridden = False
         metadata = ReportMetadata(
             report_id=report.id,
             patient_id=target_patient,
@@ -180,7 +189,7 @@ def extract_report(
             continue
 
         meta = re.fullmatch(
-            r'(Patient\s*ID|Patient_ID|PatientID|Patient\s*Name|Name|Report\s*Date|Collection\s*Date|Date|Age|Sex|Gender)\s*:\s*(.*?)\s*',
+            r'(Patient\s*ID|Patient_ID|PatientID|Patient\s*Name|Name|Report\s*Date|Collection\s*Date|Date|Age|Sex|Gender|Provenance|Report\s*Status)\s*:\s*(.*?)\s*',
             text,
             re.I,
         )
@@ -257,6 +266,12 @@ def extract_report(
     age_raw = _normalize_age(metadata_fields.get('age'))
     date_raw = metadata_fields.get('report date') or None
 
+    declares_synthetic = (
+        'synthetic' in metadata_fields.get('provenance', '').casefold()
+        or 'synthetic' in metadata_fields.get('report status', '').casefold()
+    )
+    is_synthetic = bool(synthetic) if synthetic is not None else declares_synthetic
+
     try:
         report = Report(
             id=report_id,
@@ -264,11 +279,14 @@ def extract_report(
             report_date=date_raw,
             age_at_report=age_raw,
             sex_at_report=sex_raw,
+            original_age_at_report=age_raw,
+            original_sex_at_report=sex_raw,
+            demographics_overridden=False,
             measurements=measurements,
             issues=issues,
             source_file=clean_name,
             source_hash=digest,
-            synthetic=False,
+            synthetic=is_synthetic,
         )
         patient_name = metadata_fields.get('patient name')
         patient_record = (

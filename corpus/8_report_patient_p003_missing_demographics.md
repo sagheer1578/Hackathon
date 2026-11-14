@@ -1,7 +1,7 @@
 # CityLab Diagnostics — Patient Laboratory Report (Incomplete Demographics)
 
 Facility: CityLab Diagnostics Satellite Collection Center
-Report Status: Verified Measurements (Demographics Incomplete on Requisition)
+Report Status: Synthetic Demonstration Sample Report (Demographics Incomplete)
 
 Patient ID: patient-p003
 Patient Name: Jordan Patel

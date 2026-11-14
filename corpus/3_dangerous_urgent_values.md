@@ -1,7 +1,7 @@
 # CityLab Diagnostics — Dangerous and Urgent Critical Thresholds
 
 Document ID: CLD-URG-003
-Authority: CityLab Diagnostics Critical Value Protocol
+Provenance: Synthetic Demonstration Fixture (Not Clinical Protocol)
 
 Any measurement meeting or crossing the critical thresholds below must be flagged as **Urgent** regardless of whether a normal reference range is selected. Always display the corresponding urgent guidance message.
 

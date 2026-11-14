@@ -1,7 +1,7 @@
 # CityLab Diagnostics — Medical Glossary, Aliases, and Unit Conversions
 
 Document ID: CLD-GLS-002
-Authority: CityLab Diagnostics Reference Standards
+Provenance: Synthetic Demonstration Fixture (Not Clinical Reference)
 
 ## Section 1: Canonical Tests, Documented Aliases, and Plain-Language Glossary
 

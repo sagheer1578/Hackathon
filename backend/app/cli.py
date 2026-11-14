@@ -21,7 +21,7 @@ def main() -> None:
     inv.add_argument('corpus', type=Path)
     inv.add_argument('--output', type=Path, default=Path('corpus_inventory.json'))
 
-    ing = sub.add_parser('ingest-corpus', parents=[common], help='Parse CityLab corpus files into the 9-file JSON store.')
+    ing = sub.add_parser('ingest-corpus', parents=[common], help='Parse corpus files into the canonical atomic JSON snapshot (database.json).')
     ing.add_argument('corpus', type=Path)
 
     ver = sub.add_parser('verify-evidence', parents=[common], help='Verify all stored medical excerpts match corpus files.')

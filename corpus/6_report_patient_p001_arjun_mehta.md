@@ -1,8 +1,8 @@
 # CityLab Diagnostics — Patient Laboratory Report
 
 Facility: CityLab Diagnostics Main Branch, Lahore
-Report Status: Verified Final Report
-Lab Accreditation: CLD-ISO-15189
+Report Status: Synthetic Demonstration Sample Report
+Provenance: Synthetic Demo Fixture
 Standard Administrative Notice: This document is formatted for laboratory record archival. Please consult an authorized clinician for interpretation.
 
 Patient ID: patient-p001

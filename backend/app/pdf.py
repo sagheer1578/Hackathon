@@ -101,6 +101,11 @@ def generate_pdf(patient: Patient, report: Report, analysis: Analysis) -> bytes:
 
     age_str = str(report.age_at_report) if report.age_at_report is not None else 'Not provided'
     sex_str = report.sex_at_report
+    if report.demographics_overridden:
+        age_str = f'{age_str} (user-supplied)'
+        sex_str = f'{sex_str} (user-supplied)'
+    orig_age_str = str(report.original_age_at_report) if report.original_age_at_report is not None else 'Not provided'
+    orig_sex_str = report.original_sex_at_report
     report_date_str = str(report.report_date) if report.report_date else 'Not provided'
 
     story: list = [
@@ -111,10 +116,15 @@ def generate_pdf(patient: Patient, report: Report, analysis: Analysis) -> bytes:
     # Patient & Report Metadata Card Table
     meta_rows = [
         [p('Patient Name'), p(patient.name), p('Patient ID'), p(patient.id)],
-        [p('Age at Report'), p(age_str), p('Sex at Report'), p(sex_str)],
+        [p('Age Used for Analysis'), p(age_str), p('Sex Used for Analysis'), p(sex_str)],
         [p('Original Report Date'), p(report_date_str), p('Generated (UTC)'), p(f'{analysis.generated_at:%Y-%m-%d %H:%M}')],
-        [p('Report ID'), p(report.id), p('Knowledge Version'), p(analysis.knowledge_version)],
+        [p('Report ID'), p(report.id), p('Knowledge Version'), p(f'{analysis.knowledge_version} ({analysis.knowledge_provenance})')],
     ]
+    if report.demographics_overridden:
+        meta_rows.insert(
+            2,
+            [p('Original Source Age'), p(orig_age_str), p('Original Source Sex'), p(orig_sex_str)],
+        )
     meta_table = Table(meta_rows, colWidths=[95, 161, 95, 161], hAlign='LEFT')
     meta_table.setStyle(
         TableStyle(
@@ -133,9 +143,34 @@ def generate_pdf(patient: Patient, report: Report, analysis: Analysis) -> bytes:
     )
     story.append(meta_table)
 
-    if report.synthetic:
+    if report.synthetic or analysis.knowledge_provenance == 'synthetic':
         story.append(Spacer(1, 6))
-        story.append(p('SYNTHETIC DEMONSTRATION — Not a real patient record.', 'ItemTitle'))
+        synth_table = Table(
+            [
+                [
+                    p(
+                        'SYNTHETIC DEMONSTRATION — Fictional sample patient and demonstration reference rules. '
+                        'Not a real patient record or clinically validated guideline.',
+                        'ItemTitle',
+                    )
+                ]
+            ],
+            colWidths=[512],
+            hAlign='LEFT',
+        )
+        synth_table.setStyle(
+            TableStyle(
+                [
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fffbeb')),
+                    ('BOX', (0, 0), (-1, -1), 0.75, colors.HexColor('#d97706')),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 9),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 9),
+                    ('TOPPADDING', (0, 0), (-1, -1), 4),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        story.append(synth_table)
 
     # Summary counts
     story.append(p('1. Summary of Findings', 'SectionTitle'))
