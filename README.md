@@ -68,19 +68,24 @@ cd frontend
 npm.cmd run dev
 ```
 
-### Option 3: Docker Compose
+### Option 3: Isolated Docker Demo & Temporary Public Cloudflare Quick Tunnel
 
-Copy `.env.example` to `.env` (optionally set `LLM_PROVIDER`, `LLM_API_KEY`, and `LLM_MODEL`), then run:
+For hackathon judges on external machines, [`docker-compose.yml`](docker-compose.yml) runs an isolated container stack (`citylab-backend` internal-only on container port `8000` + `citylab-frontend` Nginx bound strictly to `http://127.0.0.1:8080`) with its own persistent named volume `citylab_public_demo_data` (`PUBLIC_DEMO_MODE=true`), leaving standalone local data under `data/` (`http://127.0.0.1:8001`) and unrelated host port `8000` untouched:
 
-```bash
-docker compose up --build
+```powershell
+# Start isolated Docker demo (http://127.0.0.1:8080)
+.\scripts\start-docker-demo.ps1
+
+# Start Docker demo + temporary Cloudflare Quick Tunnel (prints https://<random>.trycloudflare.com)
+.\scripts\start-public-demo.ps1
+
+# Stop tunnel + containers cleanly while preserving citylab_public_demo_data volume
+.\scripts\stop-public-demo.ps1
 ```
 
-- Frontend UI: `http://localhost:3000`
-- Backend API: `http://localhost:8000/api/health`
-- Persistent JSON volume: `citylab_json_data` mounted to `/app/data` (persists uploaded reports, demographic updates, and analyses across container restarts).
-
-*(Note: Docker Desktop was not installed on the Windows development machine used during implementation, so Dockerfiles and `docker-compose.yml` are provided and reviewed structurally, while all runtime tests ran natively via `pytest`, `uvicorn`, and `vite build`.)*
+- **Important Operational Notes:**
+  - The generated `https://*.trycloudflare.com` link is a **temporary Quick Tunnel** (not permanent cloud hosting). Keep the host Windows machine awake and running while judges evaluate; stopping or restarting `cloudflared` rotates to a new URL.
+  - **Host Prerequisite Status:** On this workstation, Cloudflare `cloudflared` (`2026.11.0`, Apache-2.0) is installed and SHA-256 verified at `%LOCALAPPDATA%\Programs\cloudflared\cloudflared.exe`, while **Docker Desktop (`Docker.DockerDesktop`, Proprietary license)** and **WSL 2 (`HypervisorPresent: False`)** require interactive Administrator elevation (`wsl --install --no-distribution`), license acceptance, and a Windows reboot before `docker compose up` can execute live.
 
 ---
 
@@ -161,4 +166,4 @@ Each authenticated session only grants access to that profile's reports, uploade
 .\.venv\Scripts\pytest.exe -v
 ```
 
-Latest verified run: **94 passed, 0 failed** (1 Starlette `httpx` deprecation warning) across engine boundaries, demographic intervals, synthetic-vs-real rule isolation, personal profile registration & access-code login/logout & persistence across restart, private `data/uploads/` source confinement & rollback, text-PDF & mocked-OCR / missing-OCR uploads, inline review edits (`user_corrected` audit + PDF markers), noisy/injection ingestion, canonical atomic `database.json` persistence & legacy migration & fail-closed corruption/duplicate-key checks, cross-profile authorization (`404`), deterministic assistant intent routing & follow-up context tracking, strict AI safety/value validation & mocked fault fallback, demo allowlist & `DEMO_MODE=false`, and multi-page ReportLab PDF verification.
+Latest verified run: **95 passed, 0 failed** (1 Starlette `httpx` deprecation warning) across engine boundaries, demographic intervals, synthetic-vs-real rule isolation, `PUBLIC_DEMO_MODE` surfacing, personal profile registration & access-code login/logout & persistence across restart, private `data/uploads/` source confinement & rollback, text-PDF & mocked-OCR / missing-OCR uploads, inline review edits (`user_corrected` audit + PDF markers), noisy/injection ingestion, canonical atomic `database.json` persistence & legacy migration & fail-closed corruption/duplicate-key checks, cross-profile authorization (`404`), deterministic assistant intent routing & follow-up context tracking, strict AI safety/value validation & mocked fault fallback, demo allowlist & `DEMO_MODE=false`, and multi-page ReportLab PDF verification.

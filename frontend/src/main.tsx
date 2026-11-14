@@ -206,6 +206,7 @@ function App() {
   const [copiedCode, setCopiedCode] = useState(false);
 
   const [demoState, setDemoState] = useState<DemoState>('loading');
+  const [publicDemo, setPublicDemo] = useState(false);
   const [personas, setPersonas] = useState<DemoPersona[]>([]);
   const [session, setSession] = useState<Session | null>(null);
   const [reports, setReports] = useState<ReportSummary[]>([]);
@@ -253,6 +254,7 @@ function App() {
         return res.json();
       })
       .then((data) => {
+        setPublicDemo(Boolean(data?.public_demo));
         if (data?.enabled && Array.isArray(data.personas) && data.personas.length > 0) {
           setPersonas(data.personas);
           setDemoState('enabled');
@@ -898,6 +900,12 @@ function App() {
 
         <main className="flex items-center justify-center px-4 py-10 sm:px-6">
           <div className="w-full max-w-xl space-y-5">
+            {publicDemo && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-950">
+                <AlertTriangle size={15} className="shrink-0 text-amber-700" />
+                <span>Hackathon demo — use fictional information and synthetic reports.</span>
+              </div>
+            )}
             {createdProfile ? (
               <section className="rounded-xl border border-teal-200 bg-white p-6 sm:p-7">
                 <div className="flex items-center gap-2.5 text-teal-700">
@@ -1482,6 +1490,13 @@ function App() {
         </header>
 
         <main className="mx-auto w-full max-w-7xl min-w-0 flex-1 space-y-6 px-4 py-6 sm:px-8">
+          {(publicDemo || session.public_demo) && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-950">
+              <AlertTriangle size={15} className="shrink-0 text-amber-700" />
+              <span>Hackathon demo — use fictional information and synthetic reports.</span>
+            </div>
+          )}
+
           {showSyntheticDemoBanner && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-950">
               <span className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">

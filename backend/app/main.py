@@ -179,6 +179,7 @@ def create_app(
 
     if demo_mode is None:
         demo_mode = os.getenv('DEMO_MODE', 'true').strip().lower() == 'true'
+    public_demo = os.getenv('PUBLIC_DEMO_MODE', 'false').strip().lower() == 'true'
 
     should_auto_ingest = (auth_tokens is None) if auto_ingest is None else auto_ingest
     if should_auto_ingest and resolved_corpus.is_dir() and not repo.initialized():
@@ -293,6 +294,7 @@ def create_app(
             'synthetic_demo': bool(
                 demo_mode and db.knowledge_provenance == 'synthetic' and patient.profile_type == 'demo'
             ),
+            'public_demo': public_demo,
             'ocr_available': ocr_available(),
             'tests_count': len(db.test_aliases),
             'ranges_count': len(db.reference_ranges),
@@ -333,6 +335,7 @@ def create_app(
             'knowledge_version': db.knowledge_version,
             'knowledge_provenance': db.knowledge_provenance,
             'synthetic_demo': demo_mode and db.knowledge_provenance == 'synthetic',
+            'public_demo': public_demo,
             'ocr_available': ocr_available(),
             'storage_mode': 'canonical-atomic-snapshot',
             'snapshot_file': CANONICAL_FILENAME,
@@ -350,7 +353,7 @@ def create_app(
         available = [
             p for p in DEMO_PERSONAS if p['patient_id'] in db.patients and p['token'] in auth_tokens
         ]
-        return {'enabled': True, 'personas': available}
+        return {'enabled': True, 'public_demo': public_demo, 'personas': available}
 
     @app.post('/api/auth/register', status_code=201)
     def register_profile(request: Request, payload: RegisterRequest):

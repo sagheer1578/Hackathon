@@ -44,6 +44,7 @@ export interface Session {
   knowledge_version: string;
   knowledge_provenance: KnowledgeProvenance;
   synthetic_demo: boolean;
+  public_demo?: boolean;
   tests_count: number;
   ranges_count: number;
   urgent_rules_count: number;

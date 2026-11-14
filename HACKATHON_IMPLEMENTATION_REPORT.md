@@ -130,27 +130,33 @@ Implemented in [`frontend/src/main.tsx`](frontend/src/main.tsx) and [`frontend/s
 
 Executed after final code edits via `.\.venv\Scripts\pytest.exe -v`, `npm.cmd run build`, CLI evidence verification, and live `http://127.0.0.1:8001` HTTP acceptance checks:
 
-- **Full Automated Pytest Suite:** `.\.venv\Scripts\pytest.exe -v` -> **94 passed, 0 failed** (1 Starlette `httpx` deprecation warning, `12.24 s`), adding [`tests/test_personal_profiles_and_uploads.py`](tests/test_personal_profiles_and_uploads.py) alongside `test_engine.py`, `test_ingestion_storage.py`, and `test_api_ai_pdf.py`.
-- **Frontend Production Build:** `cd frontend && npm.cmd run build` -> **Passed (0 errors, `5.39 s`)**, emitting `dist/index.html` (`0.44 kB`), `dist/assets/index-rkUJx14J.css` (`21.80 kB`), `dist/assets/index-Yja_kfwj.js` (`305.13 kB`), with zero `gradient`, `backdrop-filter`, or `box-shadow` in `frontend/src/`.
-- **Live Server & Restart Persistence (`http://127.0.0.1:8001`):** Verified `/api/health` (`status: "ok"`, `ocr_available: false`), `/` + `index-Yja_kfwj.js` UI strings (`CityLab home`, `Create your profile`, `Sign in with access code`, `Review the extracted results`, `Save and analyze`, `View original report`), live profile registration -> TXT & text-PDF upload -> inline `PATCH /review` measurement correction -> `/source` download -> `/chat` -> ReportLab PDF (`User corrected`) -> logout token revocation (`401`) -> post-restart re-login with the saved access code confirming persistence of reports and corrections -> cross-profile `404` isolation -> existing sample persona flows (`Arjun Mehta` chat/PDF) -> clean snapshot restore (`data/database.json`: `212,992` bytes, `patients_count: 4`, `reports_count: 8`).
+- **Full Automated Pytest Suite:** `.\.venv\Scripts\pytest.exe -v` -> **95 passed, 0 failed** (1 Starlette `httpx` deprecation warning, `12.07 s`), adding `test_public_demo_mode_flag` in [`tests/test_personal_profiles_and_uploads.py`](tests/test_personal_profiles_and_uploads.py) alongside `test_engine.py`, `test_ingestion_storage.py`, and `test_api_ai_pdf.py`.
+- **Frontend Production Build:** `cd frontend && npm.cmd run build` -> **Passed (0 errors, `4.24 s`)**, emitting `dist/index.html` (`0.44 kB`), `dist/assets/index-rkUJx14J.css` (`21.80 kB`), `dist/assets/index-qxG5JcqT.js` (`305.83 kB`, `0` hardcoded `localhost:8000`/`8001` backend URLs), with zero `gradient`, `backdrop-filter`, or `box-shadow` in `frontend/src/`.
+- **Live Server & Restart Persistence (`http://127.0.0.1:8001`):** Verified `/api/health` (`status: "ok"`, `public_demo: false`, `ocr_available: false`), `/` + served React bundle strings (`CityLab home`, `Create your profile`, `Sign in with access code`, `Review the extracted results`, `Save and analyze`, `View original report`), live profile registration -> TXT & text-PDF upload -> inline `PATCH /review` measurement correction -> `/source` download -> `/chat` -> ReportLab PDF (`User corrected`) -> logout token revocation (`401`) -> post-restart re-login with the saved access code confirming persistence of reports and corrections -> cross-profile `404` isolation -> existing sample persona flows (`Arjun Mehta` chat/PDF) -> clean snapshot restore (`data/database.json` preserved).
 
 ## 11. Known Limitations
 
-1. **Image & Scanned-PDF OCR Host Dependency:** Requires local `tesseract` binary for `.png`/`.jpg`/`.jpeg` or image-only PDFs (`ocr_available: false` on this Windows host); digital text PDFs, CSV, TXT, Markdown, and JSON extract directly without Tesseract.
+1. **Image & Scanned-PDF OCR Host Dependency:** `backend/Dockerfile` bundles `tesseract-ocr`, while the standalone Windows host lacks a local `tesseract` binary (`ocr_available: false`); digital text PDFs, CSV, TXT, Markdown, and JSON extract directly without Tesseract.
 2. **Prototype JSON Storage Concurrency:** Filesystem-locked `data/database.json` and `data/uploads/` are suited for single-node demonstrations rather than high-throughput clinical systems.
-3. **LLM Provider Disabled / Docker & Chrome UI Unrun Locally:** Runs deterministically with `LLM_PROVIDER=disabled`; Docker Desktop and Chrome remote debugging (`DevToolsActivePort`) were absent on this host.
+3. **LLM Provider Disabled & Docker Desktop Host Prerequisite:** Runs deterministically with `LLM_PROVIDER=disabled`; Cloudflare `cloudflared` (`2026.11.0`) is installed per-user (`%LOCALAPPDATA%\Programs\cloudflared\cloudflared.exe`), while Docker Desktop (`Docker.DockerDesktop`, Proprietary license) and WSL 2 (`HypervisorPresent: False`) require Administrator elevation, license acceptance, and a Windows reboot on this host before container execution can run live.
 
 ---
 
-## 12. Docker Instructions
+## 12. Isolated Docker & Temporary Cloudflare Tunnel Setup
 
-```bash
-cp .env.example .env
-docker compose up --build
+- **Scripts:** [`scripts/start-docker-demo.ps1`](scripts/start-docker-demo.ps1), [`scripts/start-public-demo.ps1`](scripts/start-public-demo.ps1), [`scripts/stop-public-demo.ps1`](scripts/stop-public-demo.ps1)
+- **Container Topology (`docker-compose.yml`):**
+  - `citylab-backend` (`backend/Dockerfile`, non-root `appuser`, `tesseract-ocr` bundled) exposes port `8000` only on the internal Compose network (`expose: ["8000"]`, never published to host port `8000`), sets `PUBLIC_DEMO_MODE=true`, and persists isolated JSON/uploads inside named volume `citylab_public_demo_data` (`/app/data`).
+  - `citylab-frontend` (`frontend/Dockerfile` + Nginx proxy) binds strictly to `127.0.0.1:8080:80` and proxies `/api/` to `http://backend:8000/api/`.
+  - Cloudflare Quick Tunnel forwards `https://<random>.trycloudflare.com` -> `http://127.0.0.1:8080` while keeping the host PC awake (ephemeral URL rotates when stopped).
+
+```powershell
+# After Docker Desktop (WSL 2 enabled) is installed and running:
+.\scripts\start-public-demo.ps1
+
+# Stop tunnel and containers cleanly while keeping citylab_public_demo_data:
+.\scripts\stop-public-demo.ps1
 ```
-- UI served on `http://localhost:3000` (Nginx proxying `/api/` to `backend:8000` inside Compose)
-- Backend API exposed on `http://localhost:8000` inside Compose
-- Persistent JSON snapshot stored in Docker named volume `citylab_json_data` mounted at `/app/data`
 
 ---
 

@@ -368,3 +368,25 @@ def test_upload_rollback_leaves_no_orphan_file_on_storage_error(personal_env, mo
     remaining = list(uploads_subdir.glob('*')) if uploads_subdir.exists() else []
     assert remaining == []
     monkeypatch.setattr(client.app.state.repo, 'update', orig_update)
+
+
+def test_public_demo_mode_flag(tmp_path, monkeypatch):
+    """Verify PUBLIC_DEMO_MODE env flag is surfaced on health, demo, and session endpoints cleanly."""
+    corpus_dir = Path(__file__).resolve().parent.parent / 'corpus'
+
+    monkeypatch.delenv('PUBLIC_DEMO_MODE', raising=False)
+    app_default = create_app(data_dir=tmp_path / 'data_default', corpus_dir=corpus_dir, demo_mode=True)
+    with TestClient(app_default) as client:
+        assert client.get('/api/health').json()['public_demo'] is False
+        assert client.get('/api/demo/sessions').json()['public_demo'] is False
+
+    monkeypatch.setenv('PUBLIC_DEMO_MODE', 'true')
+    app_public = create_app(data_dir=tmp_path / 'data_public', corpus_dir=corpus_dir, demo_mode=True)
+    with TestClient(app_public) as client:
+        health = client.get('/api/health').json()
+        assert health['public_demo'] is True
+        demos = client.get('/api/demo/sessions').json()
+        assert demos['public_demo'] is True
+        tok = client.post('/api/auth/register', json={'name': 'Demo Judge'}).json()['session_token']
+        assert client.get('/api/session', headers=_auth(tok)).json()['public_demo'] is True
+
